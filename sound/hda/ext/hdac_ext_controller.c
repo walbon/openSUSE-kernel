@@ -77,6 +77,12 @@ int snd_hdac_ext_bus_parse_capabilities(struct hdac_ext_bus *ebus)
 			ebus->spbcap = bus->remap_addr + offset;
 			break;
 
+		case AZX_DRSM_CAP_ID:
+			/* DMA resume  capability found, handler function */
+			dev_dbg(bus->dev, "Found DRSM capability\n");
+			ebus->drsmcap = bus->remap_addr + offset;
+			break;
+
 		default:
 			dev_dbg(bus->dev, "Unknown capability %d\n", cur_cap);
 			break;
@@ -237,7 +243,7 @@ static int check_hdac_link_power_active(struct hdac_ext_link *link, bool enable)
 {
 	int timeout;
 	u32 val;
-	int mask = (1 << AZX_MLCTL_CPA);
+	int mask = (1 << AZX_MLCTL_CPA_SHIFT);
 
 	udelay(3);
 	timeout = 50;
@@ -245,10 +251,10 @@ static int check_hdac_link_power_active(struct hdac_ext_link *link, bool enable)
 	do {
 		val = readl(link->ml_addr + AZX_REG_ML_LCTL);
 		if (enable) {
-			if (((val & mask) >> AZX_MLCTL_CPA))
+			if (((val & mask) >> AZX_MLCTL_CPA_SHIFT))
 				return 0;
 		} else {
-			if (!((val & mask) >> AZX_MLCTL_CPA))
+			if (!((val & mask) >> AZX_MLCTL_CPA_SHIFT))
 				return 0;
 		}
 		udelay(3);

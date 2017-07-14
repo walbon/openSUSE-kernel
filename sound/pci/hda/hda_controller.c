@@ -412,6 +412,11 @@ static int azx_pcm_open(struct snd_pcm_substream *substream)
 		goto unlock;
 	}
 	runtime->private_data = azx_dev;
+
+	if (chip->gts_present)
+		azx_pcm_hw.info = azx_pcm_hw.info |
+			SNDRV_PCM_INFO_HAS_LINK_SYNCHRONIZED_ATIME;
+
 	runtime->hw = azx_pcm_hw;
 	runtime->hw.channels_min = hinfo->channels_min;
 	runtime->hw.channels_max = hinfo->channels_max;
@@ -930,6 +935,8 @@ irqreturn_t azx_interrupt(int irq, void *dev_id)
 	struct azx *chip = dev_id;
 	struct hdac_bus *bus = azx_bus(chip);
 	u32 status;
+	bool active, handled = false;
+	int repeat = 0; /* count for avoiding endless loop */
 
 #ifdef CONFIG_PM
 	if (azx_has_pm_runtime(chip))
@@ -939,33 +946,36 @@ irqreturn_t azx_interrupt(int irq, void *dev_id)
 
 	spin_lock(&bus->reg_lock);
 
-	if (chip->disabled) {
-		spin_unlock(&bus->reg_lock);
-		return IRQ_NONE;
-	}
+	if (chip->disabled)
+		goto unlock;
 
-	status = azx_readl(chip, INTSTS);
-	if (status == 0 || status == 0xffffffff) {
-		spin_unlock(&bus->reg_lock);
-		return IRQ_NONE;
-	}
+	do {
+		status = azx_readl(chip, INTSTS);
+		if (status == 0 || status == 0xffffffff)
+			break;
 
-	snd_hdac_bus_handle_stream_irq(bus, status, stream_update);
+		handled = true;
+		active = false;
+		if (_snd_hdac_bus_handle_stream_irq(bus, status, stream_update))
+			active = true;
 
-	/* clear rirb int */
-	status = azx_readb(chip, RIRBSTS);
-	if (status & RIRB_INT_MASK) {
-		if (status & RIRB_INT_RESPONSE) {
-			if (chip->driver_caps & AZX_DCAPS_CTX_WORKAROUND)
-				udelay(80);
-			snd_hdac_bus_update_rirb(bus);
+		/* clear rirb int */
+		status = azx_readb(chip, RIRBSTS);
+		if (status & RIRB_INT_MASK) {
+			active = true;
+			if (status & RIRB_INT_RESPONSE) {
+				if (chip->driver_caps & AZX_DCAPS_CTX_WORKAROUND)
+					udelay(80);
+				snd_hdac_bus_update_rirb(bus);
+			}
+			azx_writeb(chip, RIRBSTS, RIRB_INT_MASK);
 		}
-		azx_writeb(chip, RIRBSTS, RIRB_INT_MASK);
-	}
+	} while (active && ++repeat < 10);
 
+ unlock:
 	spin_unlock(&bus->reg_lock);
 
-	return IRQ_HANDLED;
+	return IRQ_RETVAL(handled);
 }
 EXPORT_SYMBOL_GPL(azx_interrupt);
 

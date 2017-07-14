@@ -247,7 +247,21 @@ struct hdac_rb {
 
 /*
  * HD-audio bus base driver
+ *
+ * @ppcap: pp capabilities pointer
+ * @spbcap: SPIB capabilities pointer
+ * @mlcap: MultiLink capabilities pointer
+ * @gtscap: gts capabilities pointer
+ * @drsmcap: dma resume capabilities pointer
  */
+struct hdac_bus_caps {
+	void __iomem *ppcap;
+	void __iomem *spbcap;
+	void __iomem *mlcap;
+	void __iomem *gtscap;
+	void __iomem *drsmcap;
+};
+
 struct hdac_bus {
 	struct device *dev;
 	const struct hdac_bus_ops *ops;
@@ -309,7 +323,11 @@ struct hdac_bus {
 	struct i915_audio_component *audio_component;
 	int i915_power_refcount;
 
+#ifdef __GENKSYMS__
 	void *reserved;		/* kABI placeholder */
+#else
+	struct hdac_bus_caps *caps;
+#endif
 };
 
 int snd_hdac_bus_init(struct hdac_bus *bus, struct device *dev,
@@ -339,6 +357,7 @@ static inline void snd_hdac_codec_link_down(struct hdac_device *codec)
 int snd_hdac_bus_send_cmd(struct hdac_bus *bus, unsigned int val);
 int snd_hdac_bus_get_response(struct hdac_bus *bus, unsigned int addr,
 			      unsigned int *res);
+int snd_hdac_bus_parse_capabilities(struct hdac_bus *bus);
 int snd_hdac_link_power(struct hdac_device *codec, bool enable);
 
 bool snd_hdac_bus_init_chip(struct hdac_bus *bus, bool full_reset);
@@ -350,6 +369,9 @@ void snd_hdac_bus_exit_link_reset(struct hdac_bus *bus);
 
 void snd_hdac_bus_update_rirb(struct hdac_bus *bus);
 void snd_hdac_bus_handle_stream_irq(struct hdac_bus *bus, unsigned int status,
+				    void (*ack)(struct hdac_bus *,
+						struct hdac_stream *));
+int _snd_hdac_bus_handle_stream_irq(struct hdac_bus *bus, unsigned int status,
 				    void (*ack)(struct hdac_bus *,
 						struct hdac_stream *));
 

@@ -6,6 +6,7 @@
 #include <linux/device.h>
 #include <linux/module.h>
 #include <linux/export.h>
+#include <linux/slab.h>
 #include <sound/hdaudio.h>
 #include "trace.h"
 
@@ -41,6 +42,9 @@ int snd_hdac_bus_init(struct hdac_bus *bus, struct device *dev,
 	spin_lock_init(&bus->reg_lock);
 	mutex_init(&bus->cmd_mutex);
 	bus->irq = -1;
+	bus->caps = kzalloc(sizeof(*bus->caps), GFP_KERNEL);
+	if (!bus->caps)
+		return -ENOMEM;
 	return 0;
 }
 EXPORT_SYMBOL_GPL(snd_hdac_bus_init);
@@ -54,6 +58,8 @@ void snd_hdac_bus_exit(struct hdac_bus *bus)
 	WARN_ON(!list_empty(&bus->stream_list));
 	WARN_ON(!list_empty(&bus->codec_list));
 	cancel_work_sync(&bus->unsol_work);
+	kfree(bus->caps);
+	bus->caps = NULL;
 }
 EXPORT_SYMBOL_GPL(snd_hdac_bus_exit);
 
