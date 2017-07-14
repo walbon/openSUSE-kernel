@@ -89,24 +89,23 @@ extern unsigned int HPAGE_SHIFT;
 #define GET_LOW_SLICE_INDEX(addr)	((addr) >> SLICE_LOW_SHIFT)
 #define GET_HIGH_SLICE_INDEX(addr)	((addr) >> SLICE_HIGH_SHIFT)
 
-#ifdef CONFIG_BIGMEM
-/*
- * 1 bit per slice and we have one slice per 1TB
- * Right now we support only 64TB.
- * IF we change this we will have to change the type
- * of high_slices
- */
-#define SLICE_MASK_SIZE 8
-
-#endif
 #ifndef __ASSEMBLY__
+#ifndef CONFIG_BIGMEM
 
+#else
+/*
+ * One bit per slice. We have lower slices which cover 256MB segments
+ * upto 4G range. That gets us 16 low slices. For the rest we track slices
+ * in 1TB size.
+ * 64 below is actually SLICE_NUM_HIGH to fixup complie errros
+ */
+#endif
 struct slice_mask {
 	u16 low_slices;
 #ifndef CONFIG_BIGMEM
 	u16 high_slices;
 #else
-	u64 high_slices;
+	DECLARE_BITMAP(high_slices, 64);
 #endif
 };
 
