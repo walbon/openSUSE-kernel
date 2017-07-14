@@ -10,7 +10,7 @@
 #ifndef CONFIG_BIGMEM
 #define PGD_INDEX_SIZE  4
 #else
-#define PGD_INDEX_SIZE  6
+#define PGD_INDEX_SIZE  9
 #endif
 
 #ifndef __ASSEMBLY__

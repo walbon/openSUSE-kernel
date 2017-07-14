@@ -113,8 +113,22 @@ extern struct task_struct *last_task_used_spe;
 /* 64-bit user address space is 44-bits (16TB user VM) */
 #define TASK_SIZE_USER64 (0x0000100000000000UL)
 #else
-/* 64-bit user address space is 46-bits (64TB user VM) */
-#define TASK_SIZE_USER64 (0x0000400000000000UL)
+/*
+ * 64-bit user address space can have multiple limits
+ * For now supported values are:
+ */
+#define TASK_SIZE_64TB  (0x0000400000000000UL)
+#define TASK_SIZE_128TB (0x0000800000000000UL)
+#define TASK_SIZE_512TB (0x0002000000000000UL)
+
+#ifdef CONFIG_PPC_BOOK3S_64
+/*
+ * Max value currently used:
+ */
+#define TASK_SIZE_USER64 TASK_SIZE_128TB
+#else
+#define TASK_SIZE_USER64 TASK_SIZE_64TB
+#endif
 #endif
 
 /* 
