@@ -91,11 +91,19 @@ static struct slice_mask slice_range_to_mask(unsigned long start,
 	struct slice_mask ret = { 0, 0 };
 
 	if (start < SLICE_LOW_TOP) {
+#ifndef CONFIG_BIGMEM
 		unsigned long mend = min(end, SLICE_LOW_TOP);
 		unsigned long mstart = min(start, SLICE_LOW_TOP);
+#else
+		unsigned long mend = min(end, (SLICE_LOW_TOP - 1));
+#endif
 
 		ret.low_slices = (1u << (GET_LOW_SLICE_INDEX(mend) + 1))
+#ifndef CONFIG_BIGMEM
 			- (1u << GET_LOW_SLICE_INDEX(mstart));
+#else
+			- (1u << GET_LOW_SLICE_INDEX(start));
+#endif
 	}
 
 	if ((start + len) > SLICE_LOW_TOP)
