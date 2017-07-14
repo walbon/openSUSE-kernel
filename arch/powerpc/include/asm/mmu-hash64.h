@@ -318,7 +318,7 @@ static inline unsigned long hpt_hash(unsigned long vpn,
 #endif
 {
 #ifdef CONFIG_BIGMEM
-	int mask;
+	unsigned long mask;
 #endif
 	unsigned long hash, vsid;
 
