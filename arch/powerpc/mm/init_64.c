@@ -72,9 +72,11 @@
 #if PGTABLE_RANGE > USER_VSID_RANGE
 #warning Limited user VSID range means pagetable space is wasted
 #endif
+#ifndef CONFIG_BIGMEM
 
 #if (TASK_SIZE_USER64 < PGTABLE_RANGE) && (TASK_SIZE_USER64 < USER_VSID_RANGE)
 #warning TASK_SIZE is smaller than it needs to be.
+#endif
 #endif
 #endif /* CONFIG_PPC_STD_MMU_64 */
 
