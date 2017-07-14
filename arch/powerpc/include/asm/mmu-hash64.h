@@ -464,6 +464,9 @@ extern void slb_set_size(u16 size);
 #define ESID_BITS		18
 #define ESID_BITS_1T		6
 
+#define ESID_BITS_MASK		((1 << ESID_BITS) - 1)
+#define ESID_BITS_1T_MASK	((1 << ESID_BITS_1T) - 1)
+
 #endif
 /*
 #ifndef CONFIG_BIGMEM
@@ -682,16 +685,15 @@ static inline unsigned long get_vsid(unsigned long context, unsigned long ea,
 	if (ssize == MMU_SEGSIZE_256M)
 #ifndef CONFIG_BIGMEM
 		return vsid_scramble((context << USER_ESID_BITS)
+				     | (ea >> SID_SHIFT), 256M);
+	return vsid_scramble((context << USER_ESID_BITS_1T)
+			     | (ea >> SID_SHIFT_1T), 1T);
 #else
 		return vsid_scramble((context << ESID_BITS)
-#endif
-				     | (ea >> SID_SHIFT), 256M);
-#ifndef CONFIG_BIGMEM
-	return vsid_scramble((context << USER_ESID_BITS_1T)
-#else
+				     | ((ea >> SID_SHIFT) & ESID_BITS_MASK), 256M);
 	return vsid_scramble((context << ESID_BITS_1T)
+			     | ((ea >> SID_SHIFT_1T) & ESID_BITS_1T_MASK), 1T);
 #endif
-			     | (ea >> SID_SHIFT_1T), 1T);
 }
 
 /*
