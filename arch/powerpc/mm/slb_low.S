@@ -53,6 +53,7 @@ _GLOBAL(slb_allocate_realmode)
 	/* r3 = address, r10 = esid, cr7 = <> PAGE_OFFSET */
 	blt	cr7,0f			/* user or kernel? */
 
+#ifndef CONFIG_BIGMEM
 	/* kernel address: proto-VSID = ESID */
 	/* WARNING - MAGIC: we don't use the VSID 0xfffffffff, but
 	 * this code will generate the protoVSID 0xfffffffff for the
@@ -60,6 +61,7 @@ _GLOBAL(slb_allocate_realmode)
 	 * it to VSID 0, which is reserved as a bad VSID - one which
 	 * will never have any pages in it.  */
 
+#endif
 	/* Check if hitting the linear mapping or some other kernel space
 	*/
 	bne	cr7,1f
@@ -71,12 +73,10 @@ _GLOBAL(slb_miss_kernel_load_linear)
 	li	r11,0
 #ifdef CONFIG_BIGMEM
 	/*
-	 * context = (MAX_USER_CONTEXT) + ((ea >> 60) - 0xc) + 1
+	 * context = (ea >> 60) - (0xc - 1)
 	 * r9 = region id.
 	 */
-	addis	r9,r9,(MAX_USER_CONTEXT - 0xc + 1)@ha
-	addi	r9,r9,(MAX_USER_CONTEXT - 0xc + 1)@l
-
+	subi	r9,r9,KERNEL_REGION_CONTEXT_OFFSET
 
 #endif
 BEGIN_FTR_SECTION
@@ -110,11 +110,10 @@ _GLOBAL(slb_miss_kernel_load_vmemmap)
 6:
 #ifdef CONFIG_BIGMEM
 	/*
-	 * context = (MAX_USER_CONTEXT) + ((ea >> 60) - 0xc) + 1
+	 * context = (ea >> 60) - (0xc - 1)
 	 * r9 = region id.
 	 */
-	addis	r9,r9,(MAX_USER_CONTEXT - 0xc + 1)@ha
-	addi	r9,r9,(MAX_USER_CONTEXT - 0xc + 1)@l
+	subi	r9,r9,KERNEL_REGION_CONTEXT_OFFSET
 
 #endif
 BEGIN_FTR_SECTION

@@ -241,7 +241,11 @@ again:
 		return -ENOMEM;
 
 	spin_lock(&mmu_context_lock);
+#ifndef CONFIG_BIGMEM
 	err = ida_get_new_above(&mmu_context_ida, 1, &index);
+#else
+	err = ida_get_new_above(&mmu_context_ida, MIN_USER_CONTEXT, &index);
+#endif
 	spin_unlock(&mmu_context_lock);
 
 	if (err == -EAGAIN)
