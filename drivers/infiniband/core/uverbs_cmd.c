@@ -2346,6 +2346,10 @@ static int modify_qp(struct ib_uverbs_file *file,
 		goto out;
 	}
 
+	if (cmd->base.port_num < rdma_start_port(qp->device) ||
+	    cmd->base.port_num > rdma_end_port(qp->device))
+		goto release_qp;
+
 	attr->qp_state		  = cmd->base.qp_state;
 	attr->cur_qp_state	  = cmd->base.cur_qp_state;
 	attr->path_mtu		  = cmd->base.path_mtu;
@@ -2939,6 +2943,10 @@ ssize_t ib_uverbs_create_ah(struct ib_uverbs_file *file,
 
 	if (copy_from_user(&cmd, buf, sizeof cmd))
 		return -EFAULT;
+
+	if (cmd.attr.port_num < rdma_start_port(ib_dev) ||
+	    cmd.attr.port_num > rdma_end_port(ib_dev))
+		return -EINVAL;
 
 	INIT_UDATA(&udata, buf + sizeof(cmd),
 		   (unsigned long)cmd.response + sizeof(resp),
