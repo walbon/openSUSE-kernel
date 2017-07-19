@@ -649,8 +649,6 @@ static void destroy_fs_client(struct ceph_fs_client *fsc)
 
 	destroy_mount_options(fsc->mount_options);
 
-	ceph_fs_debugfs_cleanup(fsc);
-
 	ceph_destroy_client(fsc->client);
 
 	kfree(fsc);
@@ -1054,6 +1052,10 @@ static void ceph_kill_sb(struct super_block *s)
 
 	ceph_mdsc_pre_umount(fsc->mdsc);
 	generic_shutdown_super(s);
+
+	fsc->client->extra_mon_dispatch = NULL;
+	ceph_fs_debugfs_cleanup(fsc);
+
 	ceph_mdsc_destroy(fsc);
 
 	destroy_fs_client(fsc);
