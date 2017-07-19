@@ -100,29 +100,16 @@ static int btrfs_xattr_acl_get(struct dentry *dentry, const char *name,
 /*
  * Needs to be called with fs_mutex held
  */
-static int btrfs_set_acl(struct btrfs_trans_handle *trans,
-			 struct inode *inode, struct posix_acl *acl, int type)
+static int __btrfs_set_acl(struct btrfs_trans_handle *trans,
+			   struct inode *inode, struct posix_acl *acl, int type)
 {
 	int ret, size = 0;
 	const char *name;
 	char *value = NULL;
 
-	if (acl) {
-		ret = posix_acl_valid(acl);
-		if (ret < 0)
-			return ret;
-		ret = 0;
-	}
-
 	switch (type) {
 	case ACL_TYPE_ACCESS:
 		name = POSIX_ACL_XATTR_ACCESS;
-		if (acl) {
-			ret = posix_acl_update_mode(inode, &inode->i_mode, &acl);
-			if (ret)
-				return ret;
-		}
-		ret = 0;
 		break;
 	case ACL_TYPE_DEFAULT:
 		if (!S_ISDIR(inode->i_mode))
@@ -154,6 +141,26 @@ out:
 		set_cached_acl(inode, type, acl);
 
 	return ret;
+}
+
+static int btrfs_set_acl(struct btrfs_trans_handle *trans,
+			 struct inode *inode, struct posix_acl *acl, int type)
+{
+	int ret;
+
+	if (acl) {
+		ret = posix_acl_valid(acl);
+		if (ret < 0)
+			return ret;
+		ret = 0;
+	}
+
+	if (type == ACL_TYPE_ACCESS && acl) {
+		ret = posix_acl_update_mode(inode, &inode->i_mode, &acl);
+		if (ret)
+			return ret;
+	}
+	return __btrfs_set_acl(trans, inode, acl, type);
 }
 
 static int btrfs_xattr_acl_set(struct dentry *dentry, const char *name,
@@ -240,8 +247,8 @@ int btrfs_init_acl(struct btrfs_trans_handle *trans,
 		mode_t mode;
 
 		if (S_ISDIR(inode->i_mode)) {
-			ret = btrfs_set_acl(trans, inode, acl,
-					    ACL_TYPE_DEFAULT);
+			ret = __btrfs_set_acl(trans, inode, acl,
+					      ACL_TYPE_DEFAULT);
 			if (ret)
 				goto failed;
 		}
@@ -256,8 +263,8 @@ int btrfs_init_acl(struct btrfs_trans_handle *trans,
 			inode->i_mode = mode;
 			if (ret > 0) {
 				/* we need an acl */
-				ret = btrfs_set_acl(trans, inode, clone,
-						    ACL_TYPE_ACCESS);
+				ret = __btrfs_set_acl(trans, inode, clone,
+						      ACL_TYPE_ACCESS);
 			}
 		}
 		posix_acl_release(clone);
