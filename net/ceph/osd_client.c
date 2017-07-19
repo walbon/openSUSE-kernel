@@ -506,6 +506,7 @@ static void target_copy(struct ceph_osd_request_target *dest,
 	dest->flags = src->flags;
 	dest->paused = src->paused;
 
+	dest->epoch = src->epoch;
 	dest->last_force_resend = src->last_force_resend;
 
 	dest->osd = src->osd;
@@ -1496,6 +1497,7 @@ static enum calc_target_result calc_target(struct ceph_osd_client *osdc,
 	enum calc_target_result ct_res;
 	int ret;
 
+	t->epoch = osdc->osdmap->epoch;
 	pi = ceph_pg_pool_by_id(osdc->osdmap, t->base_oloc.pool);
 	if (!pi) {
 		t->osd = CEPH_HOMELESS_OSD;
@@ -1894,10 +1896,11 @@ static void send_request(struct ceph_osd_request *req)
 
 	encode_request_partial(req, req->r_request);
 
-	dout("%s req %p tid %llu to pgid %llu.%x spgid %llu.%xs%d osd%d flags 0x%x attempt %d\n",
+	dout("%s req %p tid %llu to pgid %llu.%x spgid %llu.%xs%d osd%d e%u flags 0x%x attempt %d\n",
 	     __func__, req, req->r_tid, req->r_t.pgid.pool, req->r_t.pgid.seed,
 	     req->r_t.spgid.pgid.pool, req->r_t.spgid.pgid.seed,
-	     req->r_t.spgid.shard, osd->o_osd, req->r_flags, req->r_attempts);
+	     req->r_t.spgid.shard, osd->o_osd, req->r_t.epoch, req->r_flags,
+	     req->r_attempts);
 
 	req->r_t.paused = false;
 	req->r_stamp = jiffies;
@@ -2037,13 +2040,12 @@ static void submit_request(struct ceph_osd_request *req, bool wrlocked)
 static void finish_request(struct ceph_osd_request *req)
 {
 	struct ceph_osd_client *osdc = req->r_osdc;
-	struct ceph_osd *osd = req->r_osd;
-
-	verify_osd_locked(osd);
-	dout("%s req %p tid %llu\n", __func__, req, req->r_tid);
 
 	WARN_ON(lookup_request_mc(&osdc->map_checks, req->r_tid));
-	unlink_request(osd, req);
+	dout("%s req %p tid %llu\n", __func__, req, req->r_tid);
+
+	if (req->r_osd)
+		unlink_request(req->r_osd, req);
 	atomic_dec(&osdc->num_requests);
 
 	/*
@@ -3530,7 +3532,24 @@ static void kick_requests(struct ceph_osd_client *osdc,
 			  struct list_head *need_resend_linger)
 {
 	struct ceph_osd_linger_request *lreq, *nlreq;
+	enum calc_target_result ct_res;
 	struct rb_node *n;
+
+	/* make sure need_resend targets reflect latest map */
+	for (n = rb_first(need_resend); n; ) {
+		struct ceph_osd_request *req =
+		    rb_entry(n, struct ceph_osd_request, r_node);
+
+		n = rb_next(n);
+
+		if (req->r_t.epoch < osdc->osdmap->epoch) {
+			ct_res = calc_target(osdc, &req->r_t, NULL, false);
+			if (ct_res == CALC_TARGET_POOL_DNE) {
+				erase_request(need_resend, req);
+				check_pool_dne(req);
+			}
+		}
+	}
 
 	for (n = rb_first(need_resend); n; ) {
 		struct ceph_osd_request *req =
@@ -3540,8 +3559,6 @@ static void kick_requests(struct ceph_osd_client *osdc,
 		n = rb_next(n);
 		erase_request(need_resend, req); /* before link_request() */
 
-		WARN_ON(req->r_osd);
-		calc_target(osdc, &req->r_t, NULL, false);
 		osd = lookup_create_osd(osdc, req->r_t.osd, true);
 		link_request(osd, req);
 		if (!req->r_linger) {
