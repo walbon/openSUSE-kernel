@@ -259,8 +259,8 @@ struct posix_acl *reiserfs_get_acl(struct inode *inode, int type)
  * BKL held [before 2.5.x]
  */
 static int
-reiserfs_set_acl(struct reiserfs_transaction_handle *th, struct inode *inode,
-		 int type, struct posix_acl *acl)
+__reiserfs_set_acl(struct reiserfs_transaction_handle *th, struct inode *inode,
+		   int type, struct posix_acl *acl)
 {
 	char *name;
 	void *value = NULL;
@@ -273,11 +273,6 @@ reiserfs_set_acl(struct reiserfs_transaction_handle *th, struct inode *inode,
 	switch (type) {
 	case ACL_TYPE_ACCESS:
 		name = POSIX_ACL_XATTR_ACCESS;
-		if (acl) {
-			error = posix_acl_update_mode(inode, &inode->i_mode, &acl);
-			if (error)
-				return error;
-		}
 		break;
 	case ACL_TYPE_DEFAULT:
 		name = POSIX_ACL_XATTR_DEFAULT;
@@ -318,6 +313,20 @@ reiserfs_set_acl(struct reiserfs_transaction_handle *th, struct inode *inode,
 	return error;
 }
 
+static int
+reiserfs_set_acl(struct reiserfs_transaction_handle *th, struct inode *inode,
+		 int type, struct posix_acl *acl)
+{
+	int error;
+
+	if (type == ACL_TYPE_ACCESS && acl) {
+		error = posix_acl_update_mode(inode, &inode->i_mode, &acl);
+		if (error)
+			return error;
+	}
+	return __reiserfs_set_acl(th, inode, type, acl);
+}
+
 /* dir->i_mutex: locked,
  * inode is new and not released into the wild yet */
 int
@@ -356,8 +365,8 @@ reiserfs_inherit_default_acl(struct reiserfs_transaction_handle *th,
 
 		/* Copy the default ACL to the default ACL of a new directory */
 		if (S_ISDIR(inode->i_mode)) {
-			err = reiserfs_set_acl(th, inode, ACL_TYPE_DEFAULT,
-					       acl);
+			err = __reiserfs_set_acl(th, inode, ACL_TYPE_DEFAULT,
+						 acl);
 			if (err)
 				goto cleanup;
 		}
@@ -378,9 +387,9 @@ reiserfs_inherit_default_acl(struct reiserfs_transaction_handle *th,
 
 			/* If we need an ACL.. */
 			if (need_acl > 0) {
-				err = reiserfs_set_acl(th, inode,
-						       ACL_TYPE_ACCESS,
-						       acl_copy);
+				err = __reiserfs_set_acl(th, inode,
+						         ACL_TYPE_ACCESS,
+						         acl_copy);
 				if (err)
 					goto cleanup_copy;
 			}
