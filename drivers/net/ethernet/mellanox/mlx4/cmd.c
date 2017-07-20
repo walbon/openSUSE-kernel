@@ -880,7 +880,7 @@ static int mlx4_MAD_IFC_wrapper(struct mlx4_dev *dev, int slave,
 {
 	struct ib_smp *smp = inbox->buf;
 	u32 index;
-	u8 port;
+	u8 port, slave_port;
 	u16 *table;
 	int err;
 	int vidx, pidx;
@@ -889,7 +889,9 @@ static int mlx4_MAD_IFC_wrapper(struct mlx4_dev *dev, int slave,
 	__be16 *outtab = (__be16 *)(outsmp->data);
 	__be32 slave_cap_mask;
 	__be64 slave_node_guid;
-	port = vhcr->in_modifier;
+
+	slave_port = vhcr->in_modifier;
+	port = mlx4_slave_convert_port(dev, slave, slave_port);
 
 	if (smp->base_version == 1 &&
 	    smp->mgmt_class == IB_MGMT_CLASS_SUBN_LID_ROUTED &&
@@ -918,8 +920,9 @@ static int mlx4_MAD_IFC_wrapper(struct mlx4_dev *dev, int slave,
 			if (smp->attr_id == IB_SMP_ATTR_PORT_INFO) {
 				/*get the slave specific caps:*/
 				/*do the command */
+				smp->attr_mod = cpu_to_be32(port);
 				err = mlx4_cmd_box(dev, inbox->dma, outbox->dma,
-					    vhcr->in_modifier, vhcr->op_modifier,
+					    port, vhcr->op_modifier,
 					    vhcr->op, MLX4_CMD_TIME_CLASS_C, MLX4_CMD_NATIVE);
 				/* modify the response for slaves */
 				if (!err && slave != mlx4_master_func_num(dev)) {
@@ -950,7 +953,7 @@ static int mlx4_MAD_IFC_wrapper(struct mlx4_dev *dev, int slave,
 			}
 			if (smp->attr_id == IB_SMP_ATTR_NODE_INFO) {
 				err = mlx4_cmd_box(dev, inbox->dma, outbox->dma,
-					     vhcr->in_modifier, vhcr->op_modifier,
+					     port, vhcr->op_modifier,
 					     vhcr->op, MLX4_CMD_TIME_CLASS_C, MLX4_CMD_NATIVE);
 				if (!err) {
 					slave_node_guid =  mlx4_get_slave_node_guid(dev, slave);
@@ -1487,7 +1490,7 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.out_is_imm = false,
 		.encode_slave_id = false,
 		.verify = NULL,
-		.wrapper = NULL,
+		.wrapper = mlx4_ACCESS_REG_wrapper,
 	},
 	/* Native multicast commands are not available for guests */
 	{

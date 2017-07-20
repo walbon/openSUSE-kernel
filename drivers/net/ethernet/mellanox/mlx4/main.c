@@ -701,8 +701,6 @@ static int mlx4_slave_cap(struct mlx4_dev *dev)
 		return -ENOSYS;
 	}
 
-	mlx4_log_num_mgm_entry_size = hca_param.log_mc_entry_sz;
-
 	dev->caps.hca_core_clock = hca_param.hca_core_clock;
 
 	memset(&dev_cap, 0, sizeof(dev_cap));
@@ -2561,6 +2559,8 @@ slave_start:
 			goto err_disable_msix;
 	}
 
+	mlx4_init_quotas(dev);
+
 	err = mlx4_setup_hca(dev);
 	if (err == -EBUSY && (dev->flags & MLX4_FLAG_MSI_X) &&
 	    !mlx4_is_mfunc(dev)) {
@@ -2574,7 +2574,6 @@ slave_start:
 	if (err)
 		goto err_steer;
 
-	mlx4_init_quotas(dev);
 	/* When PF resources are ready arm its comm channel to enable
 	 * getting commands
 	 */
