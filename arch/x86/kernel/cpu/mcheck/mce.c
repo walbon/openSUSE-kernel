@@ -1323,20 +1323,15 @@ static unsigned long mce_adjust_timer_default(unsigned long interval)
 
 static unsigned long (*mce_adjust_timer)(unsigned long interval) = mce_adjust_timer_default;
 
-static void __restart_timer(struct timer_list *t, unsigned long interval)
+static void __start_timer(struct timer_list *t, unsigned long interval)
 {
 	unsigned long when = jiffies + interval;
 	unsigned long flags;
 
 	local_irq_save(flags);
 
-	if (timer_pending(t)) {
-		if (time_before(when, t->expires))
-			mod_timer_pinned(t, when);
-	} else {
-		t->expires = round_jiffies(when);
-		add_timer_on(t, smp_processor_id());
-	}
+	if (!timer_pending(t) || time_before(when, t->expires))
+		mod_timer(t, round_jiffies(when));
 
 	local_irq_restore(flags);
 }
@@ -1371,7 +1366,7 @@ static void mce_timer_fn(unsigned long data)
 
 done:
 	__this_cpu_write(mce_next_interval, iv);
-	__restart_timer(t, iv);
+	__start_timer(t, iv);
 }
 
 /*
@@ -1382,7 +1377,7 @@ void mce_timer_kick(unsigned long interval)
 	struct timer_list *t = this_cpu_ptr(&mce_timer);
 	unsigned long iv = __this_cpu_read(mce_next_interval);
 
-	__restart_timer(t, interval);
+	__start_timer(t, interval);
 
 	if (interval < iv)
 		__this_cpu_write(mce_next_interval, interval);
@@ -1740,17 +1735,15 @@ static void __mcheck_cpu_clear_vendor(struct cpuinfo_x86 *c)
 	}
 }
 
-static void mce_start_timer(unsigned int cpu, struct timer_list *t)
+static void mce_start_timer(struct timer_list *t)
 {
 	unsigned long iv = check_interval * HZ;
 
 	if (mca_cfg.ignore_ce || !iv)
 		return;
 
-	per_cpu(mce_next_interval, cpu) = iv;
-
-	t->expires = round_jiffies(jiffies + iv);
-	add_timer_on(t, cpu);
+	this_cpu_write(mce_next_interval, iv);
+	__start_timer(t, iv);
 }
 
 static void __mcheck_cpu_init_timer(void)
@@ -1759,7 +1752,7 @@ static void __mcheck_cpu_init_timer(void)
 	unsigned int cpu = smp_processor_id();
 
 	setup_timer(t, mce_timer_fn, cpu);
-	mce_start_timer(cpu, t);
+	mce_start_timer(t);
 }
 
 /* Handle unconfigured int18 (should never happen) */
@@ -2541,7 +2534,7 @@ mce_cpu_callback(struct notifier_block *nfb, unsigned long action, void *hcpu)
 		break;
 	case CPU_DOWN_FAILED:
 		smp_call_function_single(cpu, mce_reenable_cpu, &action, 1);
-		mce_start_timer(cpu, t);
+		mce_start_timer(t);
 		break;
 	}
 
