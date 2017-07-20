@@ -213,7 +213,8 @@ static inline pmd_t *vmalloc_sync_one(pgd_t *pgd, unsigned long address)
 	if (!pmd_present(*pmd_k))
 		return NULL;
 
-	if (!pmd_present(*pmd))
+	if (!pmd_present(*pmd)) {
+		pagefault_disable();
 #if CONFIG_XEN_COMPAT > 0x030002
 		set_pmd(pmd, *pmd_k);
 #else
@@ -223,7 +224,8 @@ static inline pmd_t *vmalloc_sync_one(pgd_t *pgd, unsigned long address)
 		 */
 		set_pmd(pmd, __pmd(pmd_val(*pmd_k)));
 #endif
-	else
+		pagefault_enable() /* arch_flush_lazy_mmu_mode() */;
+	} else
 		BUG_ON(pmd_page(*pmd) != pmd_page(*pmd_k));
 
 	return pmd_k;
@@ -387,8 +389,9 @@ static noinline __kprobes int vmalloc_fault(unsigned long address)
 		return -1;
 
 	if (pgd_none(*pgd)) {
+		pagefault_disable();
 		set_pgd(pgd, *pgd_ref);
-		/*arch_flush_lazy_mmu_mode();*/
+		pagefault_enable() /* arch_flush_lazy_mmu_mode() */;
 	} else {
 		BUG_ON(pgd_page_vaddr(*pgd) != pgd_page_vaddr(*pgd_ref));
 	}
