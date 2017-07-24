@@ -3089,7 +3089,9 @@ static int qeth_l3_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	elems = qeth_get_elements_no(card, (void *)hdr, new_skb,
-						 elements_needed);
+						 elements_needed,
+						 (data_offset > 0) ?
+						  data_offset : 0);
 	if (!elems) {
 		if (data_offset >= 0)
 			kmem_cache_free(qeth_core_header_cache, hdr);
