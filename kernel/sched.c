@@ -7095,12 +7095,22 @@ static int sched_domain_debug_one(struct sched_domain *sd, int cpu, int level,
 		cpulist_scnprintf(str, sizeof(str), sched_group_cpus(group));
 
 		printk(KERN_CONT " %s", str);
+
+		if ((sd->flags & SD_OVERLAP) && !cpumask_full(sched_group_mask(group))) {
+			printk(KERN_CONT " (mask: %*pbl)",
+				cpumask_pr_args(sched_group_mask(group)));
+		}
+
 		if (group->sgp->power != SCHED_POWER_SCALE) {
-			printk(KERN_CONT " (cpu_power = %d)",
+			printk(KERN_CONT " (cpu_power: %d)",
 				group->sgp->power);
 		}
 
 		group = group->next;
+
+		if (group != sd->groups)
+			printk(KERN_CONT ",");
+
 	} while (group != sd->groups);
 	printk(KERN_CONT "\n");
 
