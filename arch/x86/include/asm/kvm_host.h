@@ -122,6 +122,8 @@ enum kvm_reg {
 	NR_VCPU_REGS
 };
 
+#define VCPU_REGS_TF	31 /* TF value before instruction (after for syscall/sysret) */
+
 enum kvm_reg_ex {
 	VCPU_EXREG_PDPTR = NR_VCPU_REGS,
 	VCPU_EXREG_CR3,
