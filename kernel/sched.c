@@ -7014,7 +7014,8 @@ early_initcall(migration_init);
 
 #ifdef CONFIG_SMP
 
-static cpumask_var_t sched_domains_tmpmask; /* sched_domains_mutex */
+static cpumask_var_t sched_domains_tmpmask;  /* sched_domains_mutex */
+static cpumask_var_t sched_domains_tmpmask2; /* sched_domains_mutex */
 
 #ifdef CONFIG_SCHED_DEBUG
 
@@ -7603,12 +7604,15 @@ struct sched_domain_topology_level {
  * Only CPUs that can arrive at this group should be considered to continue
  * balancing.
  */
-static void build_group_mask(struct sched_domain *sd, struct sched_group *sg)
+static void
+build_group_mask(struct sched_domain *sd, struct sched_group *sg, struct cpumask *mask)
 {
 	const struct cpumask *sg_span = sched_group_cpus(sg);
 	struct sd_data *sdd = sd->private;
 	struct sched_domain *sibling;
 	int i;
+
+	cpumask_clear(mask);
 
 	for_each_cpu(i, sg_span) {
 		sibling = *per_cpu_ptr(sdd->sd, i);
@@ -7625,11 +7629,11 @@ static void build_group_mask(struct sched_domain *sd, struct sched_group *sg)
 		if (!cpumask_equal(sg_span, sched_domain_span(sibling->child)))
 			continue;
 
-		cpumask_set_cpu(i, sched_group_mask(sg));
+		cpumask_set_cpu(i, mask);
 	}
 
 	/* We must not have empty masks here */
-	WARN_ON_ONCE(cpumask_empty(sched_group_mask(sg)));
+	WARN_ON_ONCE(cpumask_empty(mask));
 }
 
 /*
@@ -7663,14 +7667,19 @@ build_group_from_child_sched_domain(struct sched_domain *sd, int cpu)
 }
 
 static void init_overlap_sched_group(struct sched_domain *sd,
-				     struct sched_group *sg, int cpu)
+				     struct sched_group *sg)
 {
+	struct cpumask *mask = sched_domains_tmpmask2;
 	struct sd_data *sdd = sd->private;
 	struct cpumask *sg_span;
+	int cpu;
+
+	build_group_mask(sd, sg, mask);
+	cpu = cpumask_first_and(sched_group_cpus(sg), mask);
 
 	sg->sgp = *per_cpu_ptr(sdd->sgp, cpu);
 	if (atomic_inc_return(&sg->sgp->ref) == 1)
-		build_group_mask(sd, sg);
+		cpumask_copy(sched_group_mask(sg), mask);
 
 	/*
 	 * Initialize sgp->power such that even if we mess up the
@@ -7721,7 +7730,7 @@ build_overlap_sched_groups(struct sched_domain *sd, int cpu)
 		sg_span = sched_group_cpus(sg);
 		cpumask_or(covered, covered, sg_span);
 
-		init_overlap_sched_group(sd, sg, i);
+		init_overlap_sched_group(sd, sg);
 
 		if (!first)
 			first = sg;
@@ -8845,6 +8854,7 @@ void __init sched_init(void)
 	zalloc_cpumask_var(&nohz_cpu_mask, GFP_NOWAIT);
 #ifdef CONFIG_SMP
 	zalloc_cpumask_var(&sched_domains_tmpmask, GFP_NOWAIT);
+	zalloc_cpumask_var(&sched_domains_tmpmask2, GFP_NOWAIT);
 #ifdef CONFIG_NO_HZ
 	zalloc_cpumask_var(&nohz.idle_cpus_mask, GFP_NOWAIT);
 	alloc_cpumask_var(&nohz.grp_idle_mask, GFP_NOWAIT);
