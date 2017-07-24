@@ -920,6 +920,10 @@ struct sched_group_power {
 	 * single CPU.
 	 */
 	unsigned int power, power_orig;
+
+#ifndef __GENKSYMS__
+	unsigned long cpumask[0]; /* iteration mask */
+#endif
 };
 
 struct sched_group {
