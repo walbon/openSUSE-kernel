@@ -1686,7 +1686,7 @@ static int multipath_ioctl(struct dm_target *ti, unsigned int cmd,
 			r = err;
 	}
 
-	if (r == -ENOTCONN && !fatal_signal_pending(current))
+	if (r == -ENOTCONN)
 		queue_work(kmultipathd, &m->process_queued_ios);
 
 	return r ? : __blkdev_driver_ioctl(bdev, mode, cmd, arg);
