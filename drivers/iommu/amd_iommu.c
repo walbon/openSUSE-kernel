@@ -1063,7 +1063,7 @@ static int iommu_queue_command_sync(struct amd_iommu *iommu,
 				    struct iommu_cmd *cmd,
 				    bool sync)
 {
-	unsigned int count = 0;
+	bool read_head = true;
 	u32 left, next_tail;
 	unsigned long flags;
 
@@ -1074,29 +1074,36 @@ again:
 	left      = (iommu->cmd_buf_head - next_tail) % CMD_BUFFER_SIZE;
 
 	if (left <= 0x20) {
+		struct iommu_cmd sync_cmd;
+		volatile u64 sem = 0;
+		int ret;
 
-		/* Skip udelay() the first time around */
-		if (count++) {
-			if (count == LOOP_TIMEOUT) {
-				pr_err("AMD-Vi: Command buffer timeout\n");
-				return -EIO;
-			}
+		if (read_head) {
+			/* Update head and recheck remaining space */
+			iommu->cmd_buf_head = readl(iommu->mmio_base +
+						    MMIO_CMD_HEAD_OFFSET);
+			read_head = false;
+			spin_unlock_irqrestore(&iommu->lock, flags);
 
-			udelay(1);
+			goto again;
 		}
 
-		/* Update head and recheck remaining space */
-		iommu->cmd_buf_head = readl(iommu->mmio_base +
-					    MMIO_CMD_HEAD_OFFSET);
+		read_head = true;
+
+		build_completion_wait(&sync_cmd, (u64)&sem);
+		copy_cmd_to_buffer(iommu, &sync_cmd);
 
 		spin_unlock_irqrestore(&iommu->lock, flags);
+
+		if ((ret = wait_on_sem(&sem)) != 0)
+			return ret;
 
 		goto again;
 	}
 
 	copy_cmd_to_buffer(iommu, cmd);
 
-	/* Do we need to make sure all commands are processed? */
+	/* We need to sync now to make sure all commands are processed */
 	iommu->need_sync = sync;
 
 	spin_unlock_irqrestore(&iommu->lock, flags);
