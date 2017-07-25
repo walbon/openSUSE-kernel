@@ -278,7 +278,6 @@ enum x86emul_mode {
 #define X86EMUL_GUEST_MASK           (1 << 5) /* VCPU is in guest-mode */
 #define X86EMUL_SMM_MASK             (1 << 6)
 #define X86EMUL_SMM_INSIDE_NMI_MASK  (1 << 7)
-#define X86EMUL_TF_BEFORE_INST	     (1 << 8) /* TF value before instruction (after for syscall/sysret) */
 
 struct x86_emulate_ctxt {
 	const struct x86_emulate_ops *ops;
