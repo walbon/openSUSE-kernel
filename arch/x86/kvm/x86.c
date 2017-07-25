@@ -5483,7 +5483,7 @@ restart:
 
 	if (writeback) {
 		unsigned long rflags = kvm_x86_ops->get_rflags(vcpu);
-		bool tf = ((ctxt->regs_valid & VCPU_REGS_TF) != 0);
+		bool tf = ((ctxt->regs_valid & (1U << VCPU_REGS_TF)) != 0);
 
 		ctxt->regs_valid &= ~(1U << VCPU_REGS_TF);
 		toggle_interruptibility(vcpu, ctxt->interruptibility);
