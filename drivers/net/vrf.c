@@ -602,14 +602,15 @@ static int vrf_del_slave(struct net_device *dev, struct net_device *port_dev)
 static void vrf_dev_uninit(struct net_device *dev)
 {
 	struct net_vrf *vrf = netdev_priv(dev);
-	struct net_device *port_dev;
-	struct list_head *iter;
+//	struct slave_queue *queue = &vrf->queue;
+//	struct list_head *head = &queue->all_slaves;
+//	struct slave *slave, *next;
 
 	vrf_rtable_release(dev, vrf);
 	vrf_rt6_release(dev, vrf);
 
-	netdev_for_each_lower_dev(dev, port_dev, iter)
-		vrf_del_slave(dev, port_dev);
+//	list_for_each_entry_safe(slave, next, head, list)
+//		vrf_del_slave(dev, slave->dev);
 
 	free_percpu(dev->dstats);
 	dev->dstats = NULL;
@@ -792,6 +793,12 @@ static int vrf_validate(struct nlattr *tb[], struct nlattr *data[])
 
 static void vrf_dellink(struct net_device *dev, struct list_head *head)
 {
+	struct net_device *port_dev;
+	struct list_head *iter;
+
+	netdev_for_each_lower_dev(dev, port_dev, iter)
+		vrf_del_slave(dev, port_dev);
+
 	unregister_netdevice_queue(dev, head);
 }
 
