@@ -1264,9 +1264,14 @@ static irqreturn_t ena_intr_msix_io(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+/* Reserve a single MSI-X vector for management (admin + aenq).
+ * plus reserve one vector for each potential io queue.
+ * the number of potential io queues is the minimum of what the device
+ * supports and the number of vCPUs.
+ */
 static int ena_enable_msix(struct ena_adapter *adapter, int num_queues)
 {
-	int i, msix_vecs, rc;
+	int i, msix_vecs, irq_cnt;
 
 	if (test_bit(ENA_FLAG_MSIX_ENABLED, &adapter->flags)) {
 		netif_err(adapter, probe, adapter->netdev,
@@ -1288,24 +1293,26 @@ static int ena_enable_msix(struct ena_adapter *adapter, int num_queues)
 	for (i = 0; i < msix_vecs; i++)
 		adapter->msix_entries[i].entry = i;
 
-	rc = pci_enable_msix(adapter->pdev, adapter->msix_entries, msix_vecs);
-	if (rc != 0) {
+	irq_cnt = pci_enable_msix_range(adapter->pdev, adapter->msix_entries,
+				   ENA_MIN_MSIX_VEC, msix_vecs);
+	if (irq_cnt < 0) {
 		netif_err(adapter, probe, adapter->netdev,
-			  "Failed to enable MSI-X, vectors %d rc %d\n",
-			  msix_vecs, rc);
+			  "Failed to enable MSI-X. irq_cnt %d\n", irq_cnt);
 		return -ENOSPC;
 	}
 
-	netif_dbg(adapter, probe, adapter->netdev, "enable MSI-X, vectors %d\n",
-		  msix_vecs);
-
-	if (msix_vecs >= 1) {
-		if (ena_init_rx_cpu_rmap(adapter))
-			netif_warn(adapter, probe, adapter->netdev,
-				   "Failed to map IRQs to CPUs\n");
+	if (irq_cnt != msix_vecs) {
+		netif_notice(adapter, probe, adapter->netdev,
+			     "enable only %d MSI-X (out of %d), reduce the number of queues\n",
+			     irq_cnt, msix_vecs);
+		adapter->num_queues = irq_cnt - ENA_ADMIN_MSIX_VEC;
 	}
 
-	adapter->msix_vecs = msix_vecs;
+	if (ena_init_rx_cpu_rmap(adapter))
+		netif_warn(adapter, probe, adapter->netdev,
+			   "Failed to map IRQs to CPUs\n");
+
+	adapter->msix_vecs = irq_cnt;
 	set_bit(ENA_FLAG_MSIX_ENABLED, &adapter->flags);
 
 	return 0;
@@ -1382,6 +1389,12 @@ static int ena_request_io_irq(struct ena_adapter *adapter)
 	unsigned long flags = 0;
 	struct ena_irq *irq;
 	int rc = 0, i, k;
+
+	if (!test_bit(ENA_FLAG_MSIX_ENABLED, &adapter->flags)) {
+		netif_err(adapter, ifup, adapter->netdev,
+			  "Failed to request I/O IRQ: MSI-X is not enabled\n");
+		return -EINVAL;
+	}
 
 	if (!test_bit(ENA_FLAG_MSIX_ENABLED, &adapter->flags)) {
 		netif_err(adapter, ifup, adapter->netdev,
