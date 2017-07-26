@@ -18,6 +18,7 @@
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/of_address.h>
+#include <linux/pci.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/regmap.h>
@@ -33,10 +34,24 @@
 #define HISI_SAS_MAX_DEVICES HISI_SAS_MAX_ITCT_ENTRIES
 #define HISI_SAS_RESET_BIT	0
 
-#define HISI_SAS_STATUS_BUF_SZ \
-		(sizeof(struct hisi_sas_err_record) + 1024)
-#define HISI_SAS_COMMAND_TABLE_SZ \
-		(((sizeof(union hisi_sas_command_table)+3)/4)*4)
+#define HISI_SAS_STATUS_BUF_SZ (sizeof(struct hisi_sas_status_buffer))
+#define HISI_SAS_COMMAND_TABLE_SZ (sizeof(union hisi_sas_command_table))
+
+#define hisi_sas_status_buf_addr(buf) \
+	(buf + offsetof(struct hisi_sas_slot_buf_table, status_buffer))
+#define hisi_sas_status_buf_addr_mem(slot) hisi_sas_status_buf_addr(slot->buf)
+#define hisi_sas_status_buf_addr_dma(slot) \
+	hisi_sas_status_buf_addr(slot->buf_dma)
+
+#define hisi_sas_cmd_hdr_addr(buf) \
+	(buf + offsetof(struct hisi_sas_slot_buf_table, command_header))
+#define hisi_sas_cmd_hdr_addr_mem(slot) hisi_sas_cmd_hdr_addr(slot->buf)
+#define hisi_sas_cmd_hdr_addr_dma(slot) hisi_sas_cmd_hdr_addr(slot->buf_dma)
+
+#define hisi_sas_sge_addr(buf) \
+	(buf + offsetof(struct hisi_sas_slot_buf_table, sge_page))
+#define hisi_sas_sge_addr_mem(slot) hisi_sas_sge_addr(slot->buf)
+#define hisi_sas_sge_addr_dma(slot) hisi_sas_sge_addr(slot->buf_dma)
 
 #define HISI_SAS_MAX_SSP_RESP_SZ (sizeof(struct ssp_frame_hdr) + 1024)
 #define HISI_SAS_MAX_SMP_RESP_SZ 1028
@@ -45,6 +60,12 @@
 #define DEV_IS_EXPANDER(type) \
 	((type == SAS_EDGE_EXPANDER_DEVICE) || \
 	(type == SAS_FANOUT_EXPANDER_DEVICE))
+
+#define HISI_SAS_SATA_PROTOCOL_NONDATA		0x1
+#define HISI_SAS_SATA_PROTOCOL_PIO			0x2
+#define HISI_SAS_SATA_PROTOCOL_DMA			0x4
+#define HISI_SAS_SATA_PROTOCOL_FPDMA		0x8
+#define HISI_SAS_SATA_PROTOCOL_ATAPI		0x10
 
 struct hisi_hba;
 
@@ -102,6 +123,8 @@ struct hisi_sas_cq {
 
 struct hisi_sas_dq {
 	struct hisi_hba *hisi_hba;
+	struct hisi_sas_slot	*slot_prep;
+	spinlock_t lock;
 	int	wr_point;
 	int	id;
 };
@@ -110,11 +133,13 @@ struct hisi_sas_device {
 	enum sas_device_type	dev_type;
 	struct hisi_hba		*hisi_hba;
 	struct domain_device	*sas_device;
+	struct hisi_sas_dq	*dq;
+	struct list_head	list;
 	u64 attached_phy;
 	u64 device_id;
 	atomic64_t running_req;
-	struct list_head	list;
 	u8 dev_status;
+	int sata_idx;
 };
 
 struct hisi_sas_slot {
@@ -128,15 +153,12 @@ struct hisi_sas_slot {
 	int	cmplt_queue_slot;
 	int	idx;
 	int	abort;
+	void	*buf;
+	dma_addr_t buf_dma;
 	void	*cmd_hdr;
 	dma_addr_t cmd_hdr_dma;
-	void	*status_buffer;
-	dma_addr_t status_buffer_dma;
-	void *command_table;
-	dma_addr_t command_table_dma;
-	struct hisi_sas_sge_page *sge_page;
-	dma_addr_t sge_page_dma;
 	struct work_struct abort_slot;
+	struct timer_list internal_abort_timer;
 };
 
 struct hisi_sas_tmf_task {
@@ -152,9 +174,8 @@ struct hisi_sas_hw {
 				struct domain_device *device);
 	struct hisi_sas_device *(*alloc_dev)(struct domain_device *device);
 	void (*sl_notify)(struct hisi_hba *hisi_hba, int phy_no);
-	int (*get_free_slot)(struct hisi_hba *hisi_hba, u32 dev_id,
-			int *q, int *s);
-	void (*start_delivery)(struct hisi_hba *hisi_hba);
+	int (*get_free_slot)(struct hisi_hba *hisi_hba, struct hisi_sas_dq *dq);
+	void (*start_delivery)(struct hisi_sas_dq *dq);
 	int (*prep_ssp)(struct hisi_hba *hisi_hba,
 			struct hisi_sas_slot *slot, int is_tmf,
 			struct hisi_sas_tmf_task *tmf);
@@ -186,7 +207,10 @@ struct hisi_hba {
 	/* This must be the first element, used by SHOST_TO_SAS_HA */
 	struct sas_ha_struct *p;
 
-	struct platform_device *pdev;
+	struct platform_device *platform_dev;
+	struct pci_dev *pci_dev;
+	struct device *dev;
+
 	void __iomem *regs;
 	struct regmap *ctrl;
 	u32 ctrl_reset_reg;
@@ -203,6 +227,7 @@ struct hisi_hba {
 
 	int slot_index_count;
 	unsigned long *slot_index_tags;
+	unsigned long reject_stp_links_msk;
 
 	/* SCSI/SAS glue */
 	struct sas_ha_struct sha;
@@ -214,12 +239,9 @@ struct hisi_hba {
 	struct hisi_sas_port port[HISI_SAS_MAX_PHYS];
 
 	int	queue_count;
-	struct hisi_sas_slot	*slot_prep;
 
-	struct dma_pool *sge_page_pool;
+	struct dma_pool *buffer_pool;
 	struct hisi_sas_device	devices[HISI_SAS_MAX_DEVICES];
-	struct dma_pool *command_table_pool;
-	struct dma_pool *status_buffer_pool;
 	struct hisi_sas_cmd_hdr	*cmd_hdr[HISI_SAS_MAX_QUEUES];
 	dma_addr_t cmd_hdr_dma[HISI_SAS_MAX_QUEUES];
 	void *complete_hdr[HISI_SAS_MAX_QUEUES];
@@ -237,6 +259,7 @@ struct hisi_hba {
 	struct hisi_sas_slot	*slot_info;
 	unsigned long flags;
 	const struct hisi_sas_hw *hw;	/* Low level hw interface */
+	unsigned long sata_dev_bitmap[BITS_TO_LONGS(HISI_SAS_MAX_DEVICES)];
 	struct work_struct rst_work;
 };
 
@@ -330,7 +353,7 @@ struct hisi_sas_command_table_stp {
 #define HISI_SAS_SGE_PAGE_CNT SG_CHUNK_SIZE
 struct hisi_sas_sge_page {
 	struct hisi_sas_sge sge[HISI_SAS_SGE_PAGE_CNT];
-};
+}  __aligned(16);
 
 struct hisi_sas_command_table_ssp {
 	struct ssp_frame_hdr hdr;
@@ -349,8 +372,20 @@ union hisi_sas_command_table {
 	struct hisi_sas_command_table_ssp ssp;
 	struct hisi_sas_command_table_smp smp;
 	struct hisi_sas_command_table_stp stp;
+}  __aligned(16);
+
+struct hisi_sas_status_buffer {
+	struct hisi_sas_err_record err;
+	u8	iu[1024];
+}  __aligned(16);
+
+struct hisi_sas_slot_buf_table {
+	struct hisi_sas_status_buffer status_buffer;
+	union hisi_sas_command_table command_header;
+	struct hisi_sas_sge_page sge_page;
 };
 
+extern u8 hisi_sas_get_ata_protocol(u8 cmd, int direction);
 extern struct hisi_sas_port *to_hisi_sas_port(struct asd_sas_port *sas_port);
 extern int hisi_sas_probe(struct platform_device *pdev,
 			  const struct hisi_sas_hw *ops);
