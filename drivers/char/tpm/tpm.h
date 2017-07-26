@@ -175,11 +175,21 @@ enum tpm_chip_flags {
 };
 
 struct tpm_chip {
-	struct device *pdev;	/* Device stuff */
+#ifdef __GENKSYMS__
+	struct device *pdev;
+#endif
 	struct device dev;
 	struct cdev cdev;
 
+	/* A driver callback under ops cannot be run unless ops_sem is held
+	 * (sometimes implicitly, eg for the sysfs code). ops becomes null
+	 * when the driver is unregistered, see tpm_try_get_ops.
+	 */
+#ifndef __GENKSYMS__
+	struct rw_semaphore ops_sem;
+#endif
 	const struct tpm_class_ops *ops;
+
 	unsigned int flags;
 
 	int dev_num;		/* /dev/tpm# */
@@ -204,11 +214,6 @@ struct tpm_chip {
 };
 
 #define to_tpm_chip(d) container_of(d, struct tpm_chip, dev)
-
-static inline void tpm_chip_put(struct tpm_chip *chip)
-{
-	module_put(chip->pdev->driver->owner);
-}
 
 static inline int tpm_read_index(int base, int index)
 {
@@ -521,6 +526,9 @@ extern int wait_for_tpm_stat(struct tpm_chip *, u8, unsigned long,
 			     wait_queue_head_t *, bool);
 
 struct tpm_chip *tpm_chip_find_get(int chip_num);
+__must_check int tpm_try_get_ops(struct tpm_chip *chip);
+void tpm_put_ops(struct tpm_chip *chip);
+
 extern struct tpm_chip *tpmm_chip_alloc(struct device *dev,
 				       const struct tpm_class_ops *ops);
 extern int tpm_chip_register(struct tpm_chip *chip);
