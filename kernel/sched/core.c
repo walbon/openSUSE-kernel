@@ -6012,7 +6012,8 @@ static int sched_cpu_inactive(struct notifier_block *nfb,
 	}
 }
 
-static cpumask_var_t sched_domains_tmpmask; /* sched_domains_mutex */
+static cpumask_var_t sched_domains_tmpmask;  /* sched_domains_mutex */
+static cpumask_var_t sched_domains_tmpmask2; /* sched_domains_mutex */
 
 #ifdef CONFIG_SCHED_DEBUG
 
@@ -6038,7 +6039,7 @@ static int sched_domain_debug_one(struct sched_domain *sd, int cpu, int level,
 
 	cpumask_clear(groupmask);
 
-	printk(KERN_DEBUG "%*s domain %d: ", level, "", level);
+	printk(KERN_DEBUG "%*s domain-%d: ", level, "", level);
 
 	if (!(sd->flags & SD_LOAD_BALANCE)) {
 		printk("does not load-balance\n");
@@ -6048,7 +6049,7 @@ static int sched_domain_debug_one(struct sched_domain *sd, int cpu, int level,
 		return -1;
 	}
 
-	printk(KERN_CONT "span %*pbl level %s\n",
+	printk(KERN_CONT "span=%*pbl level=%s\n",
 	       cpumask_pr_args(sched_domain_span(sd)), sd->name);
 
 	if (!cpumask_test_cpu(cpu, sched_domain_span(sd))) {
@@ -6083,14 +6084,31 @@ static int sched_domain_debug_one(struct sched_domain *sd, int cpu, int level,
 
 		cpumask_or(groupmask, groupmask, sched_group_cpus(group));
 
-		printk(KERN_CONT " %*pbl",
-		       cpumask_pr_args(sched_group_cpus(group)));
-		if (group->sgc->capacity != SCHED_CAPACITY_SCALE) {
-			printk(KERN_CONT " (cpu_capacity = %d)",
-				group->sgc->capacity);
+		printk(KERN_CONT " %d:{ span=%*pbl",
+				group->sgc->id,
+				cpumask_pr_args(sched_group_cpus(group)));
+
+		if ((sd->flags & SD_OVERLAP) && !cpumask_full(sched_group_mask(group))) {
+			printk(KERN_CONT " mask=%*pbl",
+				cpumask_pr_args(sched_group_mask(group)));
 		}
 
+		if (group->sgc->capacity != SCHED_CAPACITY_SCALE)
+			printk(KERN_CONT " cap=%d", group->sgc->capacity);
+
+		if (group == sd->groups && sd->child &&
+		    !cpumask_equal(sched_domain_span(sd->child),
+				   sched_group_cpus(group))) {
+			printk(KERN_ERR "ERROR: domain->groups does not match domain->child\n");
+		}
+
+		printk(KERN_CONT " }");
+
 		group = group->next;
+
+		if (group != sd->groups)
+			printk(KERN_CONT ",");
+
 	} while (group != sd->groups);
 	printk(KERN_CONT "\n");
 
@@ -6116,7 +6134,7 @@ static void sched_domain_debug(struct sched_domain *sd, int cpu)
 		return;
 	}
 
-	printk(KERN_DEBUG "CPU%d attaching sched-domain:\n", cpu);
+	printk(KERN_DEBUG "CPU%d attaching sched-domain(s):\n", cpu);
 
 	for (;;) {
 		if (sched_domain_debug_one(sd, cpu, level, sched_domains_tmpmask))
@@ -6474,22 +6492,16 @@ enum s_alloc {
  *
  * Only CPUs that can arrive at this group should be considered to continue
  * balancing.
- *
- * Asymmetric node setups can result in situations where the domain tree is of
- * unequal depth, make sure to skip domains that already cover the entire
- * range.
- *
- * In that case build_sched_domains() will have terminated the iteration early
- * and our sibling sd spans will be empty. Domains should always include the
- * cpu they're built on, so check that.
- *
  */
-static void build_group_mask(struct sched_domain *sd, struct sched_group *sg)
+static void
+build_group_mask(struct sched_domain *sd, struct sched_group *sg, struct cpumask *mask)
 {
 	const struct cpumask *sg_span = sched_group_cpus(sg);
 	struct sd_data *sdd = sd->private;
 	struct sched_domain *sibling;
 	int i;
+
+	cpumask_clear(mask);
 
 	for_each_cpu(i, sg_span) {
 		sibling = *per_cpu_ptr(sdd->sd, i);
@@ -6506,11 +6518,11 @@ static void build_group_mask(struct sched_domain *sd, struct sched_group *sg)
 		if (!cpumask_equal(sg_span, sched_domain_span(sibling->child)))
 			continue;
 
-		cpumask_set_cpu(i, sched_group_mask(sg));
+		cpumask_set_cpu(i, mask);
 	}
 
 	/* We must not have empty masks here */
-	WARN_ON_ONCE(cpumask_empty(sched_group_mask(sg)));
+	WARN_ON_ONCE(cpumask_empty(mask));
 }
 
 /*
@@ -6522,10 +6534,55 @@ int group_balance_cpu(struct sched_group *sg)
 	return cpumask_first_and(sched_group_cpus(sg), sched_group_mask(sg));
 }
 
+static struct sched_group *
+build_group_from_child_sched_domain(struct sched_domain *sd, int cpu)
+{
+	struct sched_group *sg;
+	struct cpumask *sg_span;
+
+	sg = kzalloc_node(sizeof(struct sched_group) + cpumask_size(),
+			GFP_KERNEL, cpu_to_node(cpu));
+
+	if (!sg)
+		return NULL;
+
+	sg_span = sched_group_cpus(sg);
+	if (sd->child)
+		cpumask_copy(sg_span, sched_domain_span(sd->child));
+	else
+		cpumask_copy(sg_span, sched_domain_span(sd));
+
+	return sg;
+}
+
+static void init_overlap_sched_group(struct sched_domain *sd,
+				     struct sched_group *sg)
+{
+	struct cpumask *mask = sched_domains_tmpmask2;
+	struct sd_data *sdd = sd->private;
+	struct cpumask *sg_span;
+	int cpu;
+
+	build_group_mask(sd, sg, mask);
+	cpu = cpumask_first_and(sched_group_cpus(sg), mask);
+
+	sg->sgc = *per_cpu_ptr(sdd->sgc, cpu);
+	if (atomic_inc_return(&sg->sgc->ref) == 1)
+		cpumask_copy(sched_group_mask(sg), mask);
+
+	/*
+	 * Initialize sgc->capacity such that even if we mess up the
+	 * domains and no possible iteration will get us here, we won't
+	 * die on a /0 trap.
+	 */
+	sg_span = sched_group_cpus(sg);
+	sg->sgc->capacity = SCHED_CAPACITY_SCALE * cpumask_weight(sg_span);
+}
+
 static int
 build_overlap_sched_groups(struct sched_domain *sd, int cpu)
 {
-	struct sched_group *first = NULL, *last = NULL, *groups = NULL, *sg;
+	struct sched_group *first = NULL, *last = NULL, *sg;
 	const struct cpumask *span = sched_domain_span(sd);
 	struct cpumask *covered = sched_domains_tmpmask;
 	struct sd_data *sdd = sd->private;
@@ -6534,7 +6591,7 @@ build_overlap_sched_groups(struct sched_domain *sd, int cpu)
 
 	cpumask_clear(covered);
 
-	for_each_cpu(i, span) {
+	for_each_cpu_wrap(i, span, cpu) {
 		struct cpumask *sg_span;
 
 		if (cpumask_test_cpu(i, covered))
@@ -6542,43 +6599,27 @@ build_overlap_sched_groups(struct sched_domain *sd, int cpu)
 
 		sibling = *per_cpu_ptr(sdd->sd, i);
 
-		/* See the comment near build_group_mask(). */
+		/*
+		 * Asymmetric node setups can result in situations where the
+		 * domain tree is of unequal depth, make sure to skip domains
+		 * that already cover the entire range.
+		 *
+		 * In that case build_sched_domains() will have terminated the
+		 * iteration early and our sibling sd spans will be empty.
+		 * Domains should always include the CPU they're built on, so
+		 * check that.
+		 */
 		if (!cpumask_test_cpu(i, sched_domain_span(sibling)))
 			continue;
 
-		sg = kzalloc_node(sizeof(struct sched_group) + cpumask_size(),
-				GFP_KERNEL, cpu_to_node(cpu));
-
+		sg = build_group_from_child_sched_domain(sibling, cpu);
 		if (!sg)
 			goto fail;
 
 		sg_span = sched_group_cpus(sg);
-		if (sibling->child)
-			cpumask_copy(sg_span, sched_domain_span(sibling->child));
-		else
-			cpumask_set_cpu(i, sg_span);
-
 		cpumask_or(covered, covered, sg_span);
 
-		sg->sgc = *per_cpu_ptr(sdd->sgc, i);
-		if (atomic_inc_return(&sg->sgc->ref) == 1)
-			build_group_mask(sd, sg);
-
-		/*
-		 * Initialize sgc->capacity such that even if we mess up the
-		 * domains and no possible iteration will get us here, we won't
-		 * die on a /0 trap.
-		 */
-		sg->sgc->capacity = SCHED_CAPACITY_SCALE * cpumask_weight(sg_span);
-
-		/*
-		 * Make sure the first group of this domain contains the
-		 * canonical balance cpu. Otherwise the sched_domain iteration
-		 * breaks. See update_sg_lb_stats().
-		 */
-		if ((!groups && cpumask_test_cpu(cpu, sg_span)) ||
-		    group_balance_cpu(sg) == cpu)
-			groups = sg;
+		init_overlap_sched_group(sd, sg);
 
 		if (!first)
 			first = sg;
@@ -6587,7 +6628,7 @@ build_overlap_sched_groups(struct sched_domain *sd, int cpu)
 		last = sg;
 		last->next = first;
 	}
-	sd->groups = groups;
+	sd->groups = first;
 
 	return 0;
 
@@ -7317,6 +7358,10 @@ static int __sdt_alloc(const struct cpumask *cpu_map)
 			if (!sgc)
 				return -ENOMEM;
 
+#ifdef CONFIG_SCHED_DEBUG
+			sgc->id = j;
+#endif
+
 			*per_cpu_ptr(sdd->sgc, j) = sgc;
 		}
 	}
@@ -7418,7 +7463,7 @@ static int build_sched_domains(const struct cpumask *cpu_map,
 			sd = build_sched_domain(tl, cpu_map, attr, sd, i);
 			if (tl == sched_domain_topology)
 				*per_cpu_ptr(d.sd, i) = sd;
-			if (tl->flags & SDTL_OVERLAP || sched_feat(FORCE_SD_OVERLAP))
+			if (tl->flags & SDTL_OVERLAP)
 				sd->flags |= SD_OVERLAP;
 			if (cpumask_equal(cpu_map, sched_domain_span(sd)))
 				break;
@@ -7516,9 +7561,13 @@ void free_sched_domains(cpumask_var_t doms[], unsigned int ndoms)
  * For now this just excludes isolated cpus, but could be used to
  * exclude other special cases in the future.
  */
-static int init_sched_domains(const struct cpumask *cpu_map)
+static int sched_init_domains(const struct cpumask *cpu_map)
 {
 	int err;
+
+	zalloc_cpumask_var(&sched_domains_tmpmask, GFP_KERNEL);
+	zalloc_cpumask_var(&sched_domains_tmpmask2, GFP_KERNEL);
+	zalloc_cpumask_var(&fallback_doms, GFP_KERNEL);
 
 	arch_update_cpu_topology();
 	ndoms_cur = 1;
@@ -7757,7 +7806,6 @@ void __init sched_init_smp(void)
 	cpumask_var_t non_isolated_cpus;
 
 	alloc_cpumask_var(&non_isolated_cpus, GFP_KERNEL);
-	alloc_cpumask_var(&fallback_doms, GFP_KERNEL);
 
 	sched_init_numa();
 
@@ -7767,7 +7815,7 @@ void __init sched_init_smp(void)
 	 * happen.
 	 */
 	mutex_lock(&sched_domains_mutex);
-	init_sched_domains(cpu_active_mask);
+	sched_init_domains(cpu_active_mask);
 	cpumask_andnot(non_isolated_cpus, cpu_possible_mask, cpu_isolated_map);
 	if (cpumask_empty(non_isolated_cpus))
 		cpumask_set_cpu(smp_processor_id(), non_isolated_cpus);
@@ -8023,7 +8071,6 @@ void __init sched_init(void)
 	calc_load_update = jiffies + LOAD_FREQ;
 
 #ifdef CONFIG_SMP
-	zalloc_cpumask_var(&sched_domains_tmpmask, GFP_NOWAIT);
 	/* May be allocated at isolcpus cmdline parse time */
 	if (cpu_isolated_map == NULL)
 		zalloc_cpumask_var(&cpu_isolated_map, GFP_NOWAIT);

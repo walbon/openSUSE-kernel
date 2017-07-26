@@ -884,6 +884,10 @@ struct sched_group_capacity {
 	unsigned long next_update;
 	int imbalance; /* XXX unrelated to capacity but shared group state */
 
+#if defined(CONFIG_SCHED_DEBUG) && !defined(__GENKSYMS__)
+	int id;
+#endif
+
 	unsigned long cpumask[0]; /* iteration mask */
 };
 
