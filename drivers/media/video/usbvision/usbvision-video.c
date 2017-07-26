@@ -1575,7 +1575,14 @@ static int __devinit usbvision_probe(struct usb_interface *intf,
 	}
 
 	for (i = 0; i < usbvision->num_alt; i++) {
-		u16 tmp = le16_to_cpu(uif->altsetting[i].endpoint[1].desc.
+		u16 tmp;
+
+		if (uif->altsetting[i].desc.bNumEndpoints < 2) {
+			ret = -ENODEV;
+			goto err_pkt;
+		}
+
+		tmp = le16_to_cpu(uif->altsetting[i].endpoint[1].desc.
 				      wMaxPacketSize);
 		usbvision->alt_max_pkt_size[i] =
 			(tmp & 0x07ff) * (((tmp & 0x1800) >> 11) + 1);
@@ -1606,7 +1613,11 @@ static int __devinit usbvision_probe(struct usb_interface *intf,
 
 	PDEBUG(DBG_PROBE, "success");
 	return 0;
+
+err_pkt:
+	usbvision_release(usbvision);
 err_usb:
+	usb_put_dev(dev);
 	return ret;
 }
 
