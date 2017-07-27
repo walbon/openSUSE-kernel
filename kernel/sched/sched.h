@@ -871,6 +871,10 @@ struct sched_group_capacity {
 	 */
 	atomic_t nr_busy_cpus;
 
+#if defined(CONFIG_SCHED_DEBUG) && !defined(__GENKSYMS__)
+	int id;
+#endif
+
 	unsigned long cpumask[0]; /* iteration mask */
 };
 
