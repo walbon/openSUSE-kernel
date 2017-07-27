@@ -1541,15 +1541,20 @@ static ssize_t wwid_show(struct device *dev, struct device_attribute *attr,
 	int serial_len = sizeof(ctrl->serial);
 	int model_len = sizeof(ctrl->model);
 
+	if (memchr_inv(ns->uuid, 0, sizeof(ns->uuid)))
+		return sprintf(buf, "uuid.%pU\n", ns->uuid);
+
 	if (memchr_inv(ns->nguid, 0, sizeof(ns->nguid)))
 		return sprintf(buf, "eui.%16phN\n", ns->nguid);
 
 	if (memchr_inv(ns->eui, 0, sizeof(ns->eui)))
 		return sprintf(buf, "eui.%8phN\n", ns->eui);
 
-	while (ctrl->serial[serial_len - 1] == ' ')
+	while (serial_len > 0 && (ctrl->serial[serial_len - 1] == ' ' ||
+				  ctrl->serial[serial_len - 1] == '\0'))
 		serial_len--;
-	while (ctrl->model[model_len - 1] == ' ')
+	while (model_len > 0 && (ctrl->model[model_len - 1] == ' ' ||
+				 ctrl->model[model_len - 1] == '\0'))
 		model_len--;
 
 	return sprintf(buf, "nvme.%04x-%*phN-%*phN-%08x\n", ctrl->vid,
