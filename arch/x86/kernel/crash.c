@@ -143,10 +143,11 @@ void crash_smp_send_stop(void)
 	if (cpus_stopped)
 		return;
 
-	if (smp_ops.crash_stop_other_cpus)
-		smp_ops.crash_stop_other_cpus();
-	else
-		smp_send_stop();
+#if defined(CONFIG_KEXEC_CORE)
+	kdump_nmi_shootdown_cpus();
+#else
+	smp_send_stop();
+#endif
 
 	cpus_stopped = 1;
 }
