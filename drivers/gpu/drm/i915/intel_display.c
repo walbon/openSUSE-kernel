@@ -9837,6 +9837,11 @@ static bool haswell_get_pipe_config(struct intel_crtc *crtc,
 	enum intel_display_power_domain pfit_domain;
 	uint32_t tmp;
 
+	if (INTEL_INFO(dev)->gen >= 9) {
+		pipe_config->scaler_state.scaler_id = -1;
+		pipe_config->scaler_state.scaler_users &= ~(1 << SKL_CRTC_INDEX);
+	}
+
 	if (!intel_display_power_is_enabled(dev_priv,
 					 POWER_DOMAIN_PIPE(crtc->pipe)))
 		return false;
@@ -9883,11 +9888,6 @@ static bool haswell_get_pipe_config(struct intel_crtc *crtc,
 	}
 
 	pfit_domain = POWER_DOMAIN_PIPE_PANEL_FITTER(crtc->pipe);
-
-	if (INTEL_INFO(dev)->gen >= 9) {
-		pipe_config->scaler_state.scaler_id = -1;
-		pipe_config->scaler_state.scaler_users &= ~(1 << SKL_CRTC_INDEX);
-	}
 
 	if (intel_display_power_is_enabled(dev_priv, pfit_domain)) {
 		if (INTEL_INFO(dev)->gen >= 9)
