@@ -109,6 +109,10 @@ struct vmw_screen_target_display_unit {
 	enum stdu_content_type content_fb_type;
 
 	bool defined;
+
+	/* For CPU Blit */
+	struct ttm_bo_kmap_obj host_map, guest_map;
+	unsigned int cpp;
 };
 
 
@@ -455,6 +459,12 @@ static int vmw_stdu_crtc_set_config(struct drm_mode_set *set)
 	 * is bound
 	 */
 	if (stdu->defined) {
+		if (stdu->guest_map.virtual)
+			ttm_bo_kunmap(&stdu->guest_map);
+
+		if (stdu->host_map.virtual)
+			ttm_bo_kunmap(&stdu->host_map);
+
 		/* Unbind current surface by binding an invalid one */
 		ret = vmw_stdu_bind_st(dev_priv, stdu, NULL);
 		if (unlikely(ret != 0))
@@ -580,6 +590,47 @@ static int vmw_stdu_crtc_set_config(struct drm_mode_set *set)
 	if (unlikely(ret != 0)) {
 		stdu->display_srf = NULL;
 		goto err_unref_content;
+	}
+
+	/*
+	 * This should only happen if the DMA buf is too large to create a
+	 * proxy surface for.
+	 * If we are a 2D VM with a DMA buffer then we have to use CPU blit
+	 * so cache these mappings
+	 */
+	if (stdu->content_fb_type == SEPARATE_DMA &&
+	    !(dev_priv->capabilities & SVGA_CAP_3D)) {
+
+		struct vmw_framebuffer_dmabuf *new_vfbd;
+
+		new_vfbd = vmw_framebuffer_to_vfbd(new_fb);
+
+		ret = ttm_bo_reserve(&new_vfbd->buffer->base, false, false,
+				     false, NULL);
+		if (ret)
+			goto err_unpin_display_and_content;
+
+		ret = ttm_bo_kmap(&new_vfbd->buffer->base, 0,
+				  new_vfbd->buffer->base.num_pages,
+				  &stdu->guest_map);
+
+		ttm_bo_unreserve(&new_vfbd->buffer->base);
+
+		if (ret) {
+			DRM_ERROR("Failed to map content buffer to CPU\n");
+			goto err_unpin_display_and_content;
+		}
+
+		ret = ttm_bo_kmap(&stdu->display_srf->res.backup->base, 0,
+				  stdu->display_srf->res.backup->base.num_pages,
+				  &stdu->host_map);
+		if (ret) {
+			DRM_ERROR("Failed to map display buffer to CPU\n");
+			ttm_bo_kunmap(&stdu->guest_map);
+			goto err_unpin_display_and_content;
+		}
+
+		stdu->cpp = new_fb->bits_per_pixel / 8;
 	}
 
 	vmw_svga_enable(dev_priv);
@@ -817,6 +868,130 @@ static void vmw_stdu_dmabuf_fifo_commit(struct vmw_kms_dirty *dirty)
 	ddirty->right = ddirty->bottom = S32_MIN;
 }
 
+
+/**
+ * vmw_stdu_dmabuf_cpu_clip - Callback to encode a CPU blit
+ *
+ * @dirty: The closure structure.
+ *
+ * This function calculates the bounding box for all the incoming clips
+ */
+static void vmw_stdu_dmabuf_cpu_clip(struct vmw_kms_dirty *dirty)
+{
+	struct vmw_stdu_dirty *ddirty =
+		container_of(dirty, struct vmw_stdu_dirty, base);
+
+	dirty->num_hits = 1;
+
+	/* Calculate bounding box */
+	ddirty->left = min_t(s32, ddirty->left, dirty->unit_x1);
+	ddirty->top = min_t(s32, ddirty->top, dirty->unit_y1);
+	ddirty->right = max_t(s32, ddirty->right, dirty->unit_x2);
+	ddirty->bottom = max_t(s32, ddirty->bottom, dirty->unit_y2);
+}
+
+
+/**
+ * vmw_stdu_dmabuf_cpu_commit - Callback to do a CPU blit from DMAbuf
+ *
+ * @dirty: The closure structure.
+ *
+ * For the special case when we cannot create a proxy surface in a
+ * 2D VM, we have to do a CPU blit ourselves.
+ */
+static void vmw_stdu_dmabuf_cpu_commit(struct vmw_kms_dirty *dirty)
+{
+	struct vmw_stdu_dirty *ddirty =
+		container_of(dirty, struct vmw_stdu_dirty, base);
+	struct vmw_screen_target_display_unit *stdu =
+		container_of(dirty->unit, typeof(*stdu), base);
+	s32 width, height;
+	s32 src_pitch, dst_pitch;
+	u8 *src, *dst;
+	bool not_used;
+
+
+	if (!dirty->num_hits)
+		return;
+
+	width = ddirty->right - ddirty->left;
+	height = ddirty->bottom - ddirty->top;
+
+	if (width == 0 || height == 0)
+		return;
+
+
+	/* Assume we are blitting from Host (display_srf) to Guest (dmabuf) */
+	src_pitch = stdu->display_srf->base_size.width * stdu->cpp;
+	src = ttm_kmap_obj_virtual(&stdu->host_map, &not_used);
+	src += dirty->unit_y1 * src_pitch + dirty->unit_x1 * stdu->cpp;
+
+	dst_pitch = ddirty->pitch;
+	dst = ttm_kmap_obj_virtual(&stdu->guest_map, &not_used);
+	dst += dirty->fb_y * dst_pitch + dirty->fb_x * stdu->cpp;
+
+
+	/* Figure out the real direction */
+	if (ddirty->transfer == SVGA3D_WRITE_HOST_VRAM) {
+		u8 *tmp;
+		s32 tmp_pitch;
+
+		tmp = src;
+		tmp_pitch = src_pitch;
+
+		src = dst;
+		src_pitch = dst_pitch;
+
+		dst = tmp;
+		dst_pitch = tmp_pitch;
+	}
+
+	/* CPU Blit */
+	while (height-- > 0) {
+		memcpy(dst, src, width * stdu->cpp);
+		dst += dst_pitch;
+		src += src_pitch;
+	}
+
+	if (ddirty->transfer == SVGA3D_WRITE_HOST_VRAM) {
+		struct vmw_private *dev_priv;
+		struct vmw_stdu_update *cmd;
+		struct drm_clip_rect region;
+		int ret;
+
+		/* We are updating the actual surface, not a proxy */
+		region.x1 = ddirty->left;
+		region.x2 = ddirty->right;
+		region.y1 = ddirty->top;
+		region.y2 = ddirty->bottom;
+		ret = vmw_kms_update_proxy(
+			(struct vmw_resource *) &stdu->display_srf->res,
+			(const struct drm_clip_rect *) &region, 1, 1);
+		if (ret)
+			goto out_cleanup;
+
+
+		dev_priv = vmw_priv(stdu->base.crtc.dev);
+		cmd = vmw_fifo_reserve(dev_priv, sizeof(*cmd));
+
+		if (!cmd) {
+			DRM_ERROR("Cannot reserve FIFO space to update STDU");
+			goto out_cleanup;
+		}
+
+		vmw_stdu_populate_update(cmd, stdu->base.unit,
+					 ddirty->left, ddirty->right,
+					 ddirty->top, ddirty->bottom);
+
+		vmw_fifo_commit(dev_priv, sizeof(*cmd));
+	}
+
+out_cleanup:
+	ddirty->left = ddirty->top = S32_MAX;
+	ddirty->right = ddirty->bottom = S32_MIN;
+}
+
+
 /**
  * vmw_kms_stdu_dma - Perform a DMA transfer between a dma-buffer backed
  * framebuffer and the screen target system.
@@ -874,6 +1049,13 @@ int vmw_kms_stdu_dma(struct vmw_private *dev_priv,
 		sizeof(SVGA3dCmdSurfaceDMASuffix);
 	if (to_surface)
 		ddirty.base.fifo_reserve_size += sizeof(struct vmw_stdu_update);
+
+	/* 2D VMs cannot use SVGA_3D_CMD_SURFACE_DMA so do CPU blit instead */
+	if (!(dev_priv->capabilities & SVGA_CAP_3D)) {
+		ddirty.base.fifo_commit = vmw_stdu_dmabuf_cpu_commit;
+		ddirty.base.clip = vmw_stdu_dmabuf_cpu_clip;
+		ddirty.base.fifo_reserve_size = 0;
+	}
 
 	ret = vmw_kms_helper_dirty(dev_priv, vfb, clips, vclips,
 				   0, 0, num_clips, increment, &ddirty.base);
@@ -1227,6 +1409,31 @@ int vmw_kms_stdu_init_display(struct vmw_private *dev_priv)
 		goto err_vblank_cleanup;
 
 	dev_priv->active_display_unit = vmw_du_screen_target;
+
+	if (dev_priv->capabilities & SVGA_CAP_3D) {
+		/*
+		 * For 3D VMs, display (scanout) buffer size is the smaller of
+		 * max texture and max STDU
+		 */
+		uint32_t max_width, max_height;
+
+		max_width = min(dev_priv->texture_max_width,
+				dev_priv->stdu_max_width);
+		max_height = min(dev_priv->texture_max_height,
+				 dev_priv->stdu_max_height);
+
+		dev->mode_config.max_width = max_width;
+		dev->mode_config.max_height = max_height;
+	} else {
+		/*
+		 * Given various display aspect ratios, there's no way to
+		 * estimate these using prim_bb_mem.  So just set these to
+		 * something arbitrarily large and we will reject any layout
+		 * that doesn't fit prim_bb_mem later
+		 */
+		dev->mode_config.max_width = 16384;
+		dev->mode_config.max_height = 16384;
+	}
 
 	for (i = 0; i < VMWGFX_NUM_DISPLAY_UNITS; ++i) {
 		ret = vmw_stdu_init(dev_priv, i);
