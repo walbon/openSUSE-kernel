@@ -32,6 +32,8 @@
 #include <asm/nmi.h>
 #include <asm/mce.h>
 #include <asm/trace/irq_vectors.h>
+#include <asm/kexec.h>
+
 /*
  *	Some notes on x86 processor bugs affecting SMP operation:
  *

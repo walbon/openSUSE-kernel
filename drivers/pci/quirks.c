@@ -304,7 +304,7 @@ static void quirk_extend_bar_to_page(struct pci_dev *dev)
 {
 	int i;
 
-	for (i = 0; i < PCI_STD_RESOURCE_END; i++) {
+	for (i = 0; i <= PCI_STD_RESOURCE_END; i++) {
 		struct resource *r = &dev->resource[i];
 
 		if (r->flags & IORESOURCE_MEM && resource_size(r) < PAGE_SIZE) {
@@ -3137,8 +3137,9 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, 0x22b5, quirk_remove_d3_delay);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, 0x22b7, quirk_remove_d3_delay);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, 0x2298, quirk_remove_d3_delay);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL, 0x229c, quirk_remove_d3_delay);
+
 /*
- * Some devices may pass our check in pci_intx_mask_supported if
+ * Some devices may pass our check in pci_intx_mask_supported() if
  * PCI_COMMAND_INTX_DISABLE works though they actually do not properly
  * support this feature.
  */
@@ -3150,6 +3151,7 @@ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_CHELSIO, 0x0030,
 			 quirk_broken_intx_masking);
 DECLARE_PCI_FIXUP_HEADER(0x1814, 0x0601, /* Ralink RT2800 802.11n PCI */
 			 quirk_broken_intx_masking);
+
 /*
  * Realtek RTL8169 PCI Gigabit Ethernet Controller (rev 10)
  * Subsystem: Realtek RTL8169/8110 Family PCI Gigabit Ethernet NIC
@@ -3158,8 +3160,93 @@ DECLARE_PCI_FIXUP_HEADER(0x1814, 0x0601, /* Ralink RT2800 802.11n PCI */
  */
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_REALTEK, 0x8169,
 			 quirk_broken_intx_masking);
-DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_MELLANOX, PCI_ANY_ID,
-			 quirk_broken_intx_masking);
+
+static u16 mellanox_broken_intx_devs[] = {
+	PCI_DEVICE_ID_MELLANOX_HERMON_SDR,
+	PCI_DEVICE_ID_MELLANOX_HERMON_DDR,
+	PCI_DEVICE_ID_MELLANOX_HERMON_QDR,
+	PCI_DEVICE_ID_MELLANOX_HERMON_DDR_GEN2,
+	PCI_DEVICE_ID_MELLANOX_HERMON_QDR_GEN2,
+	PCI_DEVICE_ID_MELLANOX_HERMON_EN,
+	PCI_DEVICE_ID_MELLANOX_HERMON_EN_GEN2,
+	PCI_DEVICE_ID_MELLANOX_CONNECTX_EN,
+	PCI_DEVICE_ID_MELLANOX_CONNECTX_EN_T_GEN2,
+	PCI_DEVICE_ID_MELLANOX_CONNECTX_EN_GEN2,
+	PCI_DEVICE_ID_MELLANOX_CONNECTX_EN_5_GEN2,
+	PCI_DEVICE_ID_MELLANOX_CONNECTX2,
+	PCI_DEVICE_ID_MELLANOX_CONNECTX3,
+	PCI_DEVICE_ID_MELLANOX_CONNECTX3_PRO,
+};
+
+#define CONNECTX_4_CURR_MAX_MINOR 99
+#define CONNECTX_4_INTX_SUPPORT_MINOR 14
+
+/*
+ * Check ConnectX-4/LX FW version to see if it supports legacy interrupts.
+ * If so, don't mark it as broken.
+ * FW minor > 99 means older FW version format and no INTx masking support.
+ * FW minor < 14 means new FW version format and no INTx masking support.
+ */
+static void mellanox_check_broken_intx_masking(struct pci_dev *pdev)
+{
+	__be32 __iomem *fw_ver;
+	u16 fw_major;
+	u16 fw_minor;
+	u16 fw_subminor;
+	u32 fw_maj_min;
+	u32 fw_sub_min;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(mellanox_broken_intx_devs); i++) {
+		if (pdev->device == mellanox_broken_intx_devs[i]) {
+			pdev->broken_intx_masking = 1;
+			return;
+		}
+	}
+
+	/* Getting here means Connect-IB cards and up. Connect-IB has no INTx
+	 * support so shouldn't be checked further
+	 */
+	if (pdev->device == PCI_DEVICE_ID_MELLANOX_CONNECTIB)
+		return;
+
+	if (pdev->device != PCI_DEVICE_ID_MELLANOX_CONNECTX4 &&
+	    pdev->device != PCI_DEVICE_ID_MELLANOX_CONNECTX4_LX)
+		return;
+
+	/* For ConnectX-4 and ConnectX-4LX, need to check FW support */
+	if (pci_enable_device_mem(pdev)) {
+		dev_warn(&pdev->dev, "Can't enable device memory\n");
+		return;
+	}
+
+	fw_ver = ioremap(pci_resource_start(pdev, 0), 4);
+	if (!fw_ver) {
+		dev_warn(&pdev->dev, "Can't map ConnectX-4 initialization segment\n");
+		goto out;
+	}
+
+	/* Reading from resource space should be 32b aligned */
+	fw_maj_min = ioread32be(fw_ver);
+	fw_sub_min = ioread32be(fw_ver + 1);
+	fw_major = fw_maj_min & 0xffff;
+	fw_minor = fw_maj_min >> 16;
+	fw_subminor = fw_sub_min & 0xffff;
+	if (fw_minor > CONNECTX_4_CURR_MAX_MINOR ||
+	    fw_minor < CONNECTX_4_INTX_SUPPORT_MINOR) {
+		dev_warn(&pdev->dev, "ConnectX-4: FW %u.%u.%u doesn't support INTx masking, disabling. Please upgrade FW to %d.14.1100 and up for INTx support\n",
+			 fw_major, fw_minor, fw_subminor, pdev->device ==
+			 PCI_DEVICE_ID_MELLANOX_CONNECTX4 ? 12 : 14);
+		pdev->broken_intx_masking = 1;
+	}
+
+	iounmap(fw_ver);
+
+out:
+	pci_disable_device(pdev);
+}
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_MELLANOX, PCI_ANY_ID,
+			mellanox_check_broken_intx_masking);
 
 static void quirk_no_bus_reset(struct pci_dev *dev)
 {
@@ -3956,6 +4043,9 @@ static int pci_quirk_cavium_acs(struct pci_dev *dev, u16 acs_flags)
 	acs_flags &= ~(PCI_ACS_SV | PCI_ACS_TB | PCI_ACS_RR |
 		       PCI_ACS_CR | PCI_ACS_UF | PCI_ACS_DT);
 
+	if (!((dev->device >= 0xa000) && (dev->device <= 0xa0ff)))
+		return -ENOTTY;
+
 	return acs_flags ? 0 : 1;
 }
 
@@ -4103,9 +4193,6 @@ static int pci_quirk_mf_endpoint_acs(struct pci_dev *dev, u16 acs_flags)
 	 */
 	acs_flags &= ~(PCI_ACS_SV | PCI_ACS_TB | PCI_ACS_RR |
 		       PCI_ACS_CR | PCI_ACS_UF | PCI_ACS_DT);
-
-	if (!((dev->device >= 0xa000) && (dev->device <= 0xa0ff)))
-		return -ENOTTY;
 
 	return acs_flags ? 0 : 1;
 }
