@@ -969,7 +969,9 @@ static int cp210x_tiocmget (struct tty_struct *tty)
 
 	dbg("%s - port %d", __func__, port->number);
 
-	cp210x_read_u8_reg(port, CP210X_GET_MDMSTS, &control);
+	result = cp210x_read_u8_reg(port, CP210X_GET_MDMSTS, &control);
+	if (result)
+		return result;
 
 	result = ((control & CONTROL_DTR) ? TIOCM_DTR : 0)
 		|((control & CONTROL_RTS) ? TIOCM_RTS : 0)
