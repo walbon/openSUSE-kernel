@@ -128,15 +128,32 @@ static void kdump_nmi_callback(int cpu, struct pt_regs *regs)
 	disable_local_APIC();
 }
 
-static void kdump_nmi_shootdown_cpus(void)
+void kdump_nmi_shootdown_cpus(void)
 {
 	nmi_shootdown_cpus(kdump_nmi_callback);
 
 	disable_local_APIC();
 }
 
+/* Override the weak function in kernel/panic.c */
+void crash_smp_send_stop(void)
+{
+	static int cpus_stopped;
+
+	if (cpus_stopped)
+		return;
+
+#if defined(CONFIG_KEXEC_CORE)
+	kdump_nmi_shootdown_cpus();
 #else
-static void kdump_nmi_shootdown_cpus(void)
+	smp_send_stop();
+#endif
+
+	cpus_stopped = 1;
+}
+
+#else
+void crash_smp_send_stop(void)
 {
 	/* There are no cpus to shootdown */
 }
@@ -155,7 +172,7 @@ void native_machine_crash_shutdown(struct pt_regs *regs)
 	/* The kernel is broken so disable interrupts */
 	local_irq_disable();
 
-	kdump_nmi_shootdown_cpus();
+	crash_smp_send_stop();
 
 	/*
 	 * VMCLEAR VMCSs loaded on this cpu if needed.

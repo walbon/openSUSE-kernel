@@ -125,11 +125,11 @@ static void dra7xx_pcie_enable_interrupts(struct pcie_port *pp)
 	struct dra7xx_pcie *dra7xx = to_dra7xx_pcie(pp);
 
 	dra7xx_pcie_writel(dra7xx, PCIECTRL_DRA7XX_CONF_IRQSTATUS_MAIN,
-			   ~INTERRUPTS);
+			   INTERRUPTS);
 	dra7xx_pcie_writel(dra7xx,
 			   PCIECTRL_DRA7XX_CONF_IRQENABLE_SET_MAIN, INTERRUPTS);
 	dra7xx_pcie_writel(dra7xx, PCIECTRL_DRA7XX_CONF_IRQSTATUS_MSI,
-			   ~LEG_EP_INTERRUPTS & ~MSI);
+			   LEG_EP_INTERRUPTS | MSI);
 
 	if (IS_ENABLED(CONFIG_PCI_MSI))
 		dra7xx_pcie_writel(dra7xx,
