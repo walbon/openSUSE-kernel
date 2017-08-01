@@ -1898,7 +1898,7 @@ again:
 		 * the drain_pebs() routine. They must not be processed again
 		 * in the for_each_bit_set() loop for regular samples below.
 		 */
-		status &= ~cpuc->pebs_enabled;
+		status &= ~(cpuc->pebs_enabled & PEBS_COUNTER_MASK);
 		status &= x86_pmu.intel_ctrl | GLOBAL_STATUS_TRACE_TOPAPMI;
 	}
 
