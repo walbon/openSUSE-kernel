@@ -1295,21 +1295,19 @@ void *forward_buff;
 void **h_buf;
 
 #ifdef CONFIG_HIBERNATE_VERIFICATION
-static int
-__copy_data_pages(struct memory_bitmap *copy_bm, struct memory_bitmap *orig_bm)
-{
-	unsigned long pfn, dst_pfn;
-	struct page *d_page;
-	void *hash_buffer = NULL;
-	struct crypto_shash *tfm = NULL;
-	struct shash_desc *desc = NULL;
-	u8 *key = NULL, *digest = NULL;
-	size_t digest_size, desc_size;
-	int key_err = 0, ret = 0;
+static u8 *s4_verify_digest;
+static struct shash_desc *s4_verify_desc;
 
-	key_err = get_hibernation_key(&key);
-	if (key_err)
-		goto copy_pages;
+int swsusp_prepare_hash(bool may_sleep)
+{
+	struct crypto_shash *tfm;
+	u8 *key;
+	size_t digest_size, desc_size;
+	int ret;
+
+	ret = get_hibernation_key(&key);
+	if (ret)
+		return 0;
 
 	tfm = crypto_alloc_shash(HIBERNATION_HMAC, 0, 0);
 	if (IS_ERR(tfm)) {
@@ -1320,26 +1318,54 @@ __copy_data_pages(struct memory_bitmap *copy_bm, struct memory_bitmap *orig_bm)
 	ret = crypto_shash_setkey(tfm, key, HIBERNATION_DIGEST_SIZE);
 	if (ret) {
 		pr_err("PM: Set HMAC key failed\n");
-		goto error_setkey;
+		goto error;
 	}
 
-	desc_size = crypto_shash_descsize(tfm) + sizeof(*desc);
+	desc_size = crypto_shash_descsize(tfm) + sizeof(*s4_verify_desc);
 	digest_size = crypto_shash_digestsize(tfm);
-	digest = kzalloc(digest_size + desc_size, GFP_KERNEL);
-	if (!digest) {
+	s4_verify_digest = kzalloc(digest_size + desc_size, GFP_KERNEL);
+	if (!s4_verify_digest) {
 		pr_err("PM: Allocate digest failed\n");
 		ret = -ENOMEM;
-		goto error_digest;
+		goto error;
 	}
 
-	desc = (void *) digest + digest_size;
-	desc->tfm = tfm;
-	desc->flags = CRYPTO_TFM_REQ_MAY_SLEEP;
-	ret = crypto_shash_init(desc);
+	s4_verify_desc = (void *) s4_verify_digest + digest_size;
+	s4_verify_desc->tfm = tfm;
+	if (may_sleep)
+		s4_verify_desc->flags = CRYPTO_TFM_REQ_MAY_SLEEP;
+	ret = crypto_shash_init(s4_verify_desc);
 	if (ret < 0)
-		goto error_shash;
+		goto free_shash;
 
-copy_pages:
+	return 0;
+
+ free_shash:
+	kfree(s4_verify_digest);
+ error:
+	crypto_free_shash(tfm);
+	s4_verify_digest = NULL;
+	s4_verify_desc = NULL;
+	return ret;
+}
+
+void swsusp_finish_hash(void)
+{
+	if (s4_verify_desc)
+		crypto_free_shash(s4_verify_desc->tfm);
+	kfree(s4_verify_digest);
+	s4_verify_desc = NULL;
+	s4_verify_digest = NULL;
+}
+
+static int
+__copy_data_pages(struct memory_bitmap *copy_bm, struct memory_bitmap *orig_bm)
+{
+	unsigned long pfn, dst_pfn;
+	struct page *d_page;
+	void *hash_buffer = NULL;
+	int ret = 0;
+
 	memory_bm_position_reset(orig_bm);
 	memory_bm_position_reset(copy_bm);
 	for (;;) {
@@ -1361,36 +1387,25 @@ copy_pages:
 			hash_buffer = page_address(d_page);
 		}
 
-		if (key_err)
+		if (!s4_verify_desc)
 			continue;
 
-		ret = crypto_shash_update(desc, hash_buffer, PAGE_SIZE);
+		ret = crypto_shash_update(s4_verify_desc, hash_buffer,
+					  PAGE_SIZE);
 		if (ret)
-			goto error_shash;
+			return ret;
 	}
 
-	if (key_err)
-		goto error_key;
+	if (s4_verify_desc) {
+		ret = crypto_shash_final(s4_verify_desc, s4_verify_digest);
+		if (ret)
+			return ret;
 
-	ret = crypto_shash_final(desc, digest);
-	if (ret)
-		goto error_shash;
-
-	memset(signature, 0, HIBERNATION_DIGEST_SIZE);
-	memcpy(signature, digest, HIBERNATION_DIGEST_SIZE);
-
-	kfree(digest);
-	crypto_free_shash(tfm);
+		memset(signature, 0, HIBERNATION_DIGEST_SIZE);
+		memcpy(signature, s4_verify_digest, HIBERNATION_DIGEST_SIZE);
+	}
 
 	return 0;
-
-error_shash:
-	kfree(digest);
-error_setkey:
-error_digest:
-	crypto_free_shash(tfm);
-error_key:
-	return ret;
 }
 
 static void snapshot_fill_sig_forward_info(int verify_ret)
@@ -1406,10 +1421,6 @@ static void snapshot_fill_sig_forward_info(int verify_ret)
 
 int snapshot_image_verify(void)
 {
-	struct crypto_shash *tfm;
-	struct shash_desc *desc;
-	u8 *key, *digest;
-	size_t digest_size, desc_size;
 	int i, ret = 0;
 
 	if (!h_buf) {
@@ -1417,60 +1428,30 @@ int snapshot_image_verify(void)
 		goto forward_ret;
 	}
 
-	ret = get_hibernation_key(&key);
-	if (ret)
+	ret = swsusp_prepare_hash(true);
+	if (ret || !s4_verify_desc)
 		goto forward_ret;
 
-	tfm = crypto_alloc_shash(HIBERNATION_HMAC, 0, 0);
-	if (IS_ERR(tfm)) {
-		pr_err("PM: Allocate HMAC failed: %ld\n", PTR_ERR(tfm));
-		return PTR_ERR(tfm);
-	}
-
-	ret = crypto_shash_setkey(tfm, key, HIBERNATION_DIGEST_SIZE);
-	if (ret) {
-		pr_err("PM: Set HMAC key failed\n");
-		goto error_setkey;
-	}
-
-	desc_size = crypto_shash_descsize(tfm) + sizeof(*desc);
-	digest_size = crypto_shash_digestsize(tfm);
-	digest = kzalloc(digest_size + desc_size, GFP_KERNEL);
-	if (!digest) {
-		pr_err("PM: Allocate digest failed\n");
-		ret = -ENOMEM;
-		goto error_digest;
-	}
-	desc = (void *) digest + digest_size;
-	desc->tfm = tfm;
-	desc->flags = CRYPTO_TFM_REQ_MAY_SLEEP;
-
-	ret = crypto_shash_init(desc);
-	if (ret < 0)
-		goto error_shash;
-
 	for (i = 0; i < nr_copy_pages; i++) {
-		ret = crypto_shash_update(desc, *(h_buf + i), PAGE_SIZE);
+		ret = crypto_shash_update(s4_verify_desc, *(h_buf + i), PAGE_SIZE);
 		if (ret)
 			goto error_shash;
 	}
 
-	ret = crypto_shash_final(desc, digest);
+	ret = crypto_shash_final(s4_verify_desc, s4_verify_digest);
 	if (ret)
 		goto error_shash;
 
 	pr_debug("PM: Signature %*phN\n", HIBERNATION_DIGEST_SIZE, signature);
-	pr_debug("PM: Digest %*phN\n", (int) digest_size, digest);
-	if (memcmp(signature, digest, HIBERNATION_DIGEST_SIZE))
+	pr_debug("PM: Digest %*phN\n", HIBERNATION_DIGEST_SIZE, s4_verify_digest);
+	if (memcmp(signature, s4_verify_digest, HIBERNATION_DIGEST_SIZE))
 		ret = -EKEYREJECTED;
 
 error_shash:
-	vfree(h_buf);
-	kfree(digest);
-error_setkey:
-error_digest:
-	crypto_free_shash(tfm);
+	swsusp_finish_hash();
+
 forward_ret:
+	vfree(h_buf);
 	if (ret)
 		pr_warn("PM: Signature verifying failed: %d\n", ret);
 	if (ret == -ENODEV && !efi_enabled(EFI_BOOT)) {
