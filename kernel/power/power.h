@@ -24,10 +24,15 @@ extern bool swsusp_page_is_keys(struct page *page);
 extern unsigned long get_forward_buff_pfn(void);
 extern void fill_forward_info(void *forward_buff_page, int verify_ret);
 extern void restore_sig_forward_info(void);
+/* snapshot.c */
+int swsusp_prepare_hash(bool may_sleep);
+void swsusp_finish_hash(void);
 #else
 static inline bool swsusp_page_is_keys(struct page *page) { return false; }
 static inline unsigned long get_forward_buff_pfn(void) { return 0; }
 static inline void restore_sig_forward_info(void) {}
+static inline int swsusp_prepare_hash(bool may_sleep) { return 0; }
+static inline void swsusp_finish_hash(void) {}
 #endif
 
 /* kernel/power/snapshot.c */
