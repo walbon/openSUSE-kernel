@@ -350,8 +350,16 @@ static int oti6858_startup(struct usb_serial *serial)
 	struct usb_serial_port *port = serial->port[0];
 	struct oti6858_private *priv;
 	int i;
+	unsigned char num_ports = serial->num_ports;
 
-	for (i = 0; i < serial->num_ports; ++i) {
+	if (serial->num_bulk_in < num_ports ||
+			serial->num_bulk_out < num_ports ||
+			serial->num_interrupt_in < num_ports) {
+		dev_err(&serial->interface->dev, "missing endpoints\n");
+		return -ENODEV;
+	}
+
+	for (i = 0; num_ports; ++i) {
 		priv = kzalloc(sizeof(struct oti6858_private), GFP_KERNEL);
 		if (!priv)
 			break;
