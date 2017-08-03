@@ -255,6 +255,9 @@ enum scsi_target_state {
 	STARGET_RUNNING,
 	STARGET_REMOVE,
 	STARGET_DEL,
+#ifndef __GENKSYMS__
+	STARGET_CREATED_REMOVE,
+#endif
 };
 
 /*
