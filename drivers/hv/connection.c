@@ -372,7 +372,7 @@ int vmbus_post_msg(void *buffer, size_t buflen)
 			break;
 		case HV_STATUS_INSUFFICIENT_MEMORY:
 		case HV_STATUS_INSUFFICIENT_BUFFERS:
-			ret = -ENOMEM;
+			ret = -ENOBUFS;
 			break;
 		case HV_STATUS_SUCCESS:
 			return ret;
