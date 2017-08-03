@@ -315,7 +315,7 @@ alloc_init_deleg(struct nfs4_client *clp, struct nfs4_stateid *stp, struct svc_f
 	dp->dl_file = fp;
 	dp->dl_type = type;
 	dp->dl_stateid.si_boot = boot_time;
-	dp->dl_stateid.si_stateownerid = ida_simple_get(&current_ids, 0, 0, GFP_KERNEL);
+	dp->dl_stateid.si_stateownerid = ida_simple_get(&current_ids, 1, 0, GFP_KERNEL);
 	dp->dl_stateid.si_fileid = 0;
 	dp->dl_stateid.si_generation = 0;
 	fh_copy_shallow(&dp->dl_fh, &current_fh->fh_handle);
@@ -2171,7 +2171,7 @@ alloc_init_file(struct inode *ino)
 		INIT_LIST_HEAD(&fp->fi_stateids);
 		INIT_LIST_HEAD(&fp->fi_delegations);
 		fp->fi_inode = igrab(ino);
-		fp->fi_id = ida_simple_get(&current_ids, 0, 0, GFP_KERNEL);
+		fp->fi_id = ida_simple_get(&current_ids, 1, 0, GFP_KERNEL);
 		fp->fi_had_conflict = false;
 		fp->fi_lease = NULL;
 		memset(fp->fi_fds, 0, sizeof(fp->fi_fds));
@@ -2264,7 +2264,7 @@ alloc_init_open_stateowner(unsigned int strhashval, struct nfs4_client *clp, str
 
 	if (!(sop = alloc_stateowner(&open->op_owner)))
 		return NULL;
-	coi = ida_simple_get(&current_ids, 0, 0, GFP_KERNEL);
+	coi = ida_simple_get(&current_ids, 1, 0, GFP_KERNEL);
 	idhashval = ownerid_hashval(coi);
 	INIT_LIST_HEAD(&sop->so_idhash);
 	INIT_LIST_HEAD(&sop->so_strhash);
@@ -3795,7 +3795,7 @@ alloc_init_lock_stateowner(unsigned int strhashval, struct nfs4_client *clp, str
 
 	if (!(sop = alloc_stateowner(&lock->lk_new_owner)))
 		return NULL;
-	coi = ida_simple_get(&current_ids, 0, 0, GFP_KERNEL);
+	coi = ida_simple_get(&current_ids, 1, 0, GFP_KERNEL);
 	idhashval = ownerid_hashval(coi);
 	INIT_LIST_HEAD(&sop->so_idhash);
 	INIT_LIST_HEAD(&sop->so_strhash);
