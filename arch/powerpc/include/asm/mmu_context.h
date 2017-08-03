@@ -18,7 +18,9 @@ extern int init_new_context(struct task_struct *tsk, struct mm_struct *mm);
 extern void destroy_context(struct mm_struct *mm);
 
 extern void switch_mmu_context(struct mm_struct *prev, struct mm_struct *next);
+#ifndef CONFIG_BIGMEM
 extern void switch_stab(struct task_struct *tsk, struct mm_struct *mm);
+#endif
 extern void switch_slb(struct task_struct *tsk, struct mm_struct *mm);
 extern void set_context(unsigned long id, pgd_t *pgd);
 
@@ -79,8 +81,10 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 #ifdef CONFIG_PPC_STD_MMU_64
 	if (mmu_has_feature(MMU_FTR_SLB))
 		switch_slb(tsk, next);
+#ifndef CONFIG_BIGMEM
 	else
 		switch_stab(tsk, next);
+#endif
 #else
 	/* Out of line for now */
 	switch_mmu_context(prev, next);

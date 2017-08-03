@@ -23,6 +23,50 @@
 #include <asm/pgtable.h>
 #include <asm/firmware.h>
 
+#ifdef CONFIG_BIGMEM
+/*
+ * This macro generates asm code to compute the VSID scramble
+ * function.  Used in slb_allocate() and do_stab_bolted.  The function
+ * computed is: (protovsid*VSID_MULTIPLIER) % VSID_MODULUS
+ *
+ *	rt = register containing the proto-VSID and into which the
+ *		VSID will be stored
+ *	rx = scratch register (clobbered)
+ *	rf = flags
+ *
+ *	- rt and rx must be different registers
+ *	- The answer will end up in the low VSID_BITS bits of rt.  The higher
+ *	  bits may contain other garbage, so you may need to mask the
+ *	  result.
+ */
+#define ASM_VSID_SCRAMBLE(rt, rx, rf, size)				\
+	lis	rx,VSID_MULTIPLIER_##size@h;				\
+	ori	rx,rx,VSID_MULTIPLIER_##size@l;				\
+	mulld	rt,rt,rx;		/* rt = rt * MULTIPLIER */	\
+/*									\
+ * powermac get slb fault before feature fixup, so make 65 bit part     \
+ * the default part of feature fixup					\
+ */									\
+BEGIN_MMU_FTR_SECTION							\
+	srdi	rx,rt,VSID_BITS_65_##size;				\
+	clrldi	rt,rt,(64-VSID_BITS_65_##size);				\
+	add	rt,rt,rx;						\
+	addi	rx,rt,1;						\
+	srdi	rx,rx,VSID_BITS_65_##size;				\
+	add	rt,rt,rx;						\
+	rldimi	rf,rt,SLB_VSID_SHIFT_##size,(64 - (SLB_VSID_SHIFT_##size + VSID_BITS_65_##size)); \
+MMU_FTR_SECTION_ELSE							\
+	srdi	rx,rt,VSID_BITS_##size;					\
+	clrldi	rt,rt,(64-VSID_BITS_##size);				\
+	add	rt,rt,rx;		/* add high and low bits */	\
+	addi	rx,rt,1;						\
+	srdi	rx,rx,VSID_BITS_##size;	/* extract 2^VSID_BITS bit */	\
+	add	rt,rt,rx;						\
+	rldimi	rf,rt,SLB_VSID_SHIFT_##size,(64 - (SLB_VSID_SHIFT_##size + VSID_BITS_##size)); \
+ALT_MMU_FTR_SECTION_END_IFCLR(MMU_FTR_68_BIT_VA)
+
+
+#endif
 /* void slb_allocate_realmode(unsigned long ea);
  *
  * Create an SLB entry for the given EA (user or kernel).
@@ -38,7 +82,7 @@ _GLOBAL(slb_allocate_realmode)
 	 * check for bad kernel/user address
 	 * (ea & ~REGION_MASK) >= PGTABLE_RANGE
 	 */
-	rldicr. r9,r3,4,(63 - 46 - 4)
+	rldicr. r9,r3,4,(63 - PGTABLE_EADDR_SIZE - 4)
 	bne-	8f
 #endif
 
@@ -53,6 +97,7 @@ _GLOBAL(slb_allocate_realmode)
 	/* r3 = address, r10 = esid, cr7 = <> PAGE_OFFSET */
 	blt	cr7,0f			/* user or kernel? */
 
+#ifndef CONFIG_BIGMEM
 	/* kernel address: proto-VSID = ESID */
 	/* WARNING - MAGIC: we don't use the VSID 0xfffffffff, but
 	 * this code will generate the protoVSID 0xfffffffff for the
@@ -60,6 +105,7 @@ _GLOBAL(slb_allocate_realmode)
 	 * it to VSID 0, which is reserved as a bad VSID - one which
 	 * will never have any pages in it.  */
 
+#endif
 	/* Check if hitting the linear mapping or some other kernel space
 	*/
 	bne	cr7,1f
@@ -71,12 +117,10 @@ _GLOBAL(slb_miss_kernel_load_linear)
 	li	r11,0
 #ifdef CONFIG_BIGMEM
 	/*
-	 * context = (MAX_USER_CONTEXT) + ((ea >> 60) - 0xc) + 1
+	 * context = (ea >> 60) - (0xc - 1)
 	 * r9 = region id.
 	 */
-	addis	r9,r9,(MAX_USER_CONTEXT - 0xc + 1)@ha
-	addi	r9,r9,(MAX_USER_CONTEXT - 0xc + 1)@l
-
+	subi	r9,r9,KERNEL_REGION_CONTEXT_OFFSET
 
 #endif
 BEGIN_FTR_SECTION
@@ -110,11 +154,10 @@ _GLOBAL(slb_miss_kernel_load_vmemmap)
 6:
 #ifdef CONFIG_BIGMEM
 	/*
-	 * context = (MAX_USER_CONTEXT) + ((ea >> 60) - 0xc) + 1
+	 * context = (ea >> 60) - (0xc - 1)
 	 * r9 = region id.
 	 */
-	addis	r9,r9,(MAX_USER_CONTEXT - 0xc + 1)@ha
-	addi	r9,r9,(MAX_USER_CONTEXT - 0xc + 1)@l
+	subi	r9,r9,KERNEL_REGION_CONTEXT_OFFSET
 
 #endif
 BEGIN_FTR_SECTION
@@ -292,20 +335,14 @@ _GLOBAL(slb_allocate_user)
 #endif
  */
 slb_finish_load:
-#ifdef CONFIG_BIGMEM
-	rldimi  r10,r9,ESID_BITS,0
-#endif
-	ASM_VSID_SCRAMBLE(r10,r9,256M)
 #ifndef CONFIG_BIGMEM
+	ASM_VSID_SCRAMBLE(r10,r9,256M)
 	rldimi	r11,r10,SLB_VSID_SHIFT,16	/* combine VSID and flags */
-#else
-	/*
-	 * bits above VSID_BITS_256M need to be ignored from r10
-	 * also combine VSID and flags
-	 */
-	rldimi	r11,r10,SLB_VSID_SHIFT,(64 - (SLB_VSID_SHIFT + VSID_BITS_256M))
-#endif
 
+#else
+	rldimi  r10,r9,ESID_BITS,0
+	ASM_VSID_SCRAMBLE(r10,r9,r11,256M)
+#endif
 	/* r3 = EA, r11 = VSID data */
 	/*
 	 * Find a slot, round robin. Previously we tried to find a
@@ -395,19 +432,13 @@ _GLOBAL(slb_compare_rr_to_size)
 slb_finish_load_1T:
 #ifndef CONFIG_BIGMEM
 	srdi	r10,r10,40-28		/* get 1T ESID */
+	ASM_VSID_SCRAMBLE(r10,r9,1T)
+	rldimi	r11,r10,SLB_VSID_SHIFT_1T,16	/* combine VSID and flags */
 #else
 	srdi	r10,r10,(SID_SHIFT_1T - SID_SHIFT)	/* get 1T ESID */
 	rldimi  r10,r9,ESID_BITS_1T,0
-#endif
-	ASM_VSID_SCRAMBLE(r10,r9,1T)
-#ifndef CONFIG_BIGMEM
-	rldimi	r11,r10,SLB_VSID_SHIFT_1T,16	/* combine VSID and flags */
-#else
-	/*
-	 * bits above VSID_BITS_1T need to be ignored from r10
-	 * also combine VSID and flags
-	 */
-	rldimi	r11,r10,SLB_VSID_SHIFT_1T,(64 - (SLB_VSID_SHIFT_1T + VSID_BITS_1T))
+	ASM_VSID_SCRAMBLE(r10,r9,r11,1T)
+
 #endif
 	li	r10,MMU_SEGSIZE_1T
 	rldimi	r11,r10,SLB_VSID_SSIZE_SHIFT,0	/* insert segment size */

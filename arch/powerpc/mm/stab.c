@@ -1,3 +1,4 @@
+#ifndef CONFIG_BIGMEM
 /*
  * PowerPC64 Segment Translation Support.
  *
@@ -294,3 +295,4 @@ void stab_initialize(unsigned long stab)
 
 	mtspr(SPRN_ASR, stabreal);
 }
+#endif

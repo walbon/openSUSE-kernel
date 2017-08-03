@@ -2702,6 +2702,7 @@ static void dump_slb(void)
 	}
 }
 
+#ifndef CONFIG_BIGMEM
 static void dump_stab(void)
 {
 	int i;
@@ -2722,12 +2723,15 @@ static void dump_stab(void)
 	}
 }
 
+#endif
 void dump_segments(void)
 {
 	if (mmu_has_feature(MMU_FTR_SLB))
 		dump_slb();
+#ifndef CONFIG_BIGMEM
 	else
 		dump_stab();
+#endif
 }
 #endif
 

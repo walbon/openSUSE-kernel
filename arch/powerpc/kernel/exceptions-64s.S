@@ -80,6 +80,7 @@ data_access_pSeries:
 	HMT_MEDIUM_PPR_DISCARD
 	DO_KVM	0x300
 	SET_SCRATCH0(r13)
+#ifndef CONFIG_BIGMEM
 BEGIN_FTR_SECTION
 	GET_PACA(r13)
 	std	r9,PACA_EXSLB+EX_R9(r13)
@@ -102,8 +103,11 @@ BEGIN_FTR_SECTION
 	std	r12,PACA_EXGEN+EX_R13(r13)
 	EXCEPTION_PROLOG_PSERIES_1(data_access_common, EXC_STD)
 FTR_SECTION_ELSE
+#endif
 	EXCEPTION_PROLOG_PSERIES(PACA_EXGEN, data_access_common, EXC_STD)
+#ifndef CONFIG_BIGMEM
 ALT_MMU_FTR_SECTION_END_IFCLR(MMU_FTR_SLB)
+#endif
 
 	. = 0x380
 	.globl data_access_slb_pSeries
@@ -324,6 +328,7 @@ masked_Hinterrupt:
 	hrfid
 	b	.
 
+#ifndef CONFIG_BIGMEM
 	.align	7
 do_stab_bolted_pSeries:
 	std	r11,PACA_EXSLB+EX_R11(r13)
@@ -332,6 +337,7 @@ do_stab_bolted_pSeries:
 	std	r10,PACA_EXSLB+EX_R13(r13)
 	EXCEPTION_PROLOG_PSERIES_1(.do_stab_bolted, EXC_STD)
 
+#endif
 #ifdef CONFIG_PPC_PSERIES
 /*
  * Vectors for the FWNMI option.  Share common code.
@@ -868,12 +874,14 @@ _STATIC(do_hash_page)
 	bne-	handle_page_fault	/* if not, try to insert a HPTE */
 	andis.  r0,r4,DSISR_DABRMATCH@h
 	bne-    handle_dabr_fault
+#ifndef CONFIG_BIGMEM
 
 BEGIN_FTR_SECTION
 	andis.	r0,r4,0x0020		/* Is it a segment table fault? */
 	bne-	do_ste_alloc		/* If so handle it */
 END_MMU_FTR_SECTION_IFCLR(MMU_FTR_SLB)
 
+#endif
 	clrrdi	r11,r1,THREAD_SHIFT
 	lwz	r0,TI_PREEMPT(r11)	/* If we're in an "NMI" */
 	andis.	r0,r0,NMI_MASK@h	/* (i.e. an irq when soft-disabled) */
@@ -1006,6 +1014,7 @@ handle_page_fault:
 	bl	.bad_page_fault
 	b	.ret_from_except
 
+#ifndef CONFIG_BIGMEM
 	/* here we have a segment miss */
 do_ste_alloc:
 	bl	.ste_allocate		/* try to insert stab entry */
@@ -1024,52 +1033,18 @@ do_ste_alloc:
 _GLOBAL(do_stab_bolted)
 	stw	r9,PACA_EXSLB+EX_CCR(r13)	/* save CR in exc. frame */
 	std	r11,PACA_EXSLB+EX_SRR0(r13)	/* save SRR0 in exc. frame */
-#ifdef CONFIG_BIGMEM
-	mfspr	r11,SPRN_DAR			/* ea */
 
-	/*
-	 * check for bad kernel/user address
-	 * (ea & ~REGION_MASK) >= PGTABLE_RANGE
-	 */
-	rldicr. r9,r11,4,(63 - 46 - 4)
-	li	r9,0	/* VSID = 0 for bad address */
-	bne-	0f
-
-	/*
-	 * Calculate VSID:
-	 * This is the kernel vsid, we take the top for context from
-	 * the range. context = (MAX_USER_CONTEXT) + ((ea >> 60) - 0xc) + 1
-	 * Here we know that (ea >> 60) == 0xc
-	 */
-	lis	r9,(MAX_USER_CONTEXT + 1)@ha
-	addi	r9,r9,(MAX_USER_CONTEXT + 1)@l
-
-	srdi	r10,r11,SID_SHIFT
-	rldimi  r10,r9,ESID_BITS,0 /* proto vsid */
-	ASM_VSID_SCRAMBLE(r10, r9, 256M)
-	rldic	r9,r10,12,16	/* r9 = vsid << 12 */
-#endif
-
-#ifdef CONFIG_BIGMEM
-0:
-#endif
 	/* Hash to the primary group */
 	ld	r10,PACASTABVIRT(r13)
-#ifndef CONFIG_BIGMEM
 	mfspr	r11,SPRN_DAR
 	srdi	r11,r11,28
-#else
-	srdi	r11,r11,SID_SHIFT
-#endif
 	rldimi	r10,r11,7,52	/* r10 = first ste of the group */
 
-#ifndef CONFIG_BIGMEM
 	/* Calculate VSID */
 	/* This is a kernel address, so protovsid = ESID */
 	ASM_VSID_SCRAMBLE(r11, r9, 256M)
 	rldic	r9,r11,12,16	/* r9 = vsid << 12 */
 
-#endif
 	/* Search the primary group for a free entry */
 1:	ld	r11,0(r10)	/* Test valid bit of the current ste	*/
 	andi.	r11,r11,0x80
@@ -1133,6 +1108,7 @@ _GLOBAL(do_stab_bolted)
 	rfid
 	b	.	/* prevent speculative execution */
 
+#endif
 #ifdef CONFIG_PPC_PSERIES
 /*
  * Data area reserved for FWNMI option.
@@ -1169,6 +1145,7 @@ xLparMap:
 #ifdef CONFIG_PPC_PSERIES
         . = 0x8000
 #endif /* CONFIG_PPC_PSERIES */
+#ifndef CONFIG_BIGMEM
 
 /*
  * Space for CPU0's segment table.
@@ -1183,3 +1160,4 @@ xLparMap:
 	.globl initial_stab
 initial_stab:
 	.space	4096
+#endif

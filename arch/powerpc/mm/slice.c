@@ -34,15 +34,20 @@
 #include <asm/mmu.h>
 #include <asm/spu.h>
 
-#ifdef CONFIG_BIGMEM
-/* some sanity checks */
-#if (PGTABLE_RANGE >> 43) > SLICE_MASK_SIZE
-#error PGTABLE_RANGE exceeds slice_mask high_slices size
-#endif
-
-#endif
 static DEFINE_SPINLOCK(slice_convert_lock);
+#ifndef CONFIG_BIGMEM
 
+#else
+/*
+ * One bit per slice. We have lower slices which cover 256MB segments
+ * upto 4G range. That gets us 16 low slices. For the rest we track slices
+ * in 1TB size.
+ */
+struct slice_mask {
+	u64 low_slices;
+	DECLARE_BITMAP(high_slices, SLICE_NUM_HIGH);
+};
+#endif
 
 #ifdef DEBUG
 int _slice_debug = 1;
@@ -51,13 +56,12 @@ static void slice_print_mask(const char *label, struct slice_mask mask)
 {
 #ifndef CONFIG_BIGMEM
 	char	*p, buf[16 + 3 + 16 + 1];
-#else
-	char	*p, buf[16 + 3 + 64 + 1];
-#endif
 	int	i;
 
+#endif
 	if (!_slice_debug)
 		return;
+#ifndef CONFIG_BIGMEM
 	p = buf;
 	for (i = 0; i < SLICE_NUM_LOW; i++)
 		*(p++) = (mask.low_slices & (1 << i)) ? '1' : '0';
@@ -65,17 +69,21 @@ static void slice_print_mask(const char *label, struct slice_mask mask)
 	*(p++) = '-';
 	*(p++) = ' ';
 	for (i = 0; i < SLICE_NUM_HIGH; i++)
-#ifndef CONFIG_BIGMEM
 		*(p++) = (mask.high_slices & (1 << i)) ? '1' : '0';
-#else
-		*(p++) = (mask.high_slices & (1ul << i)) ? '1' : '0';
-#endif
 	*(p++) = 0;
 
 	printk(KERN_DEBUG "%s:%s\n", label, buf);
+#else
+	pr_devel("%s low_slice: %*pbl\n", label, (int)SLICE_NUM_LOW, &mask.low_slices);
+	pr_devel("%s high_slice: %*pbl\n", label, (int)SLICE_NUM_HIGH, mask.high_slices);
+#endif
 }
 
+#ifndef CONFIG_BIGMEM
 #define slice_dbg(fmt...) do { if (_slice_debug) pr_debug(fmt); } while(0)
+#else
+#define slice_dbg(fmt...) do { if (_slice_debug) pr_devel(fmt); } while (0)
+#endif
 
 #else
 
@@ -84,30 +92,57 @@ static void slice_print_mask(const char *label, struct slice_mask mask) {}
 
 #endif
 
+#ifndef CONFIG_BIGMEM
 static struct slice_mask slice_range_to_mask(unsigned long start,
 					     unsigned long len)
+#else
+static void slice_range_to_mask(unsigned long start, unsigned long len,
+				struct slice_mask *ret)
+#endif
 {
 	unsigned long end = start + len - 1;
+#ifndef CONFIG_BIGMEM
 	struct slice_mask ret = { 0, 0 };
+#else
+
+	ret->low_slices = 0;
+	bitmap_zero(ret->high_slices, SLICE_NUM_HIGH);
+#endif
 
 	if (start < SLICE_LOW_TOP) {
+#ifndef CONFIG_BIGMEM
 		unsigned long mend = min(end, SLICE_LOW_TOP);
 		unsigned long mstart = min(start, SLICE_LOW_TOP);
+#else
+		unsigned long mend = min(end, (SLICE_LOW_TOP - 1));
+#endif
 
+#ifndef CONFIG_BIGMEM
 		ret.low_slices = (1u << (GET_LOW_SLICE_INDEX(mend) + 1))
 			- (1u << GET_LOW_SLICE_INDEX(mstart));
+#else
+		ret->low_slices = (1u << (GET_LOW_SLICE_INDEX(mend) + 1))
+			- (1u << GET_LOW_SLICE_INDEX(start));
+#endif
 	}
 
-	if ((start + len) > SLICE_LOW_TOP)
 #ifndef CONFIG_BIGMEM
+	if ((start + len) > SLICE_LOW_TOP)
 		ret.high_slices = (1u << (GET_HIGH_SLICE_INDEX(end) + 1))
 			- (1u << GET_HIGH_SLICE_INDEX(start));
 #else
-		ret.high_slices = (1ul << (GET_HIGH_SLICE_INDEX(end) + 1))
-			- (1ul << GET_HIGH_SLICE_INDEX(start));
+	if ((start + len) > SLICE_LOW_TOP) {
+		unsigned long start_index = GET_HIGH_SLICE_INDEX(start);
+		unsigned long align_end = ALIGN(end, (1UL << SLICE_HIGH_SHIFT));
+		unsigned long count = GET_HIGH_SLICE_INDEX(align_end) - start_index;
 #endif
 
+#ifndef CONFIG_BIGMEM
 	return ret;
+#else
+		bitmap_set(ret->high_slices, start_index, count);
+	}
+#endif
 }
 
 static int slice_area_is_free(struct mm_struct *mm, unsigned long addr,
@@ -141,36 +176,60 @@ static int slice_high_has_vma(struct mm_struct *mm, unsigned long slice)
 	return !slice_area_is_free(mm, start, end - start);
 }
 
+#ifndef CONFIG_BIGMEM
 static struct slice_mask slice_mask_for_free(struct mm_struct *mm)
+#else
+static void slice_mask_for_free(struct mm_struct *mm, struct slice_mask *ret)
+#endif
 {
+#ifndef CONFIG_BIGMEM
 	struct slice_mask ret = { 0, 0 };
+#endif
 	unsigned long i;
 
+#ifdef CONFIG_BIGMEM
+	ret->low_slices = 0;
+	bitmap_zero(ret->high_slices, SLICE_NUM_HIGH);
+
+#endif
 	for (i = 0; i < SLICE_NUM_LOW; i++)
 		if (!slice_low_has_vma(mm, i))
+#ifndef CONFIG_BIGMEM
 			ret.low_slices |= 1u << i;
+#else
+			ret->low_slices |= 1u << i;
+#endif
 
 	if (mm->task_size <= SLICE_LOW_TOP)
+#ifndef CONFIG_BIGMEM
 		return ret;
+#else
+		return;
+#endif
 
 	for (i = 0; i < SLICE_NUM_HIGH; i++)
 		if (!slice_high_has_vma(mm, i))
 #ifndef CONFIG_BIGMEM
 			ret.high_slices |= 1u << i;
-#else
-			ret.high_slices |= 1ul << i;
-#endif
 
 	return ret;
+#else
+			__set_bit(i, ret->high_slices);
+#endif
 }
 
+#ifndef CONFIG_BIGMEM
 static struct slice_mask slice_mask_for_size(struct mm_struct *mm, int psize)
+#else
+static void slice_mask_for_size(struct mm_struct *mm, int psize, struct slice_mask *ret)
+#endif
 {
-#ifdef CONFIG_BIGMEM
+#ifndef CONFIG_BIGMEM
+	struct slice_mask ret = { 0, 0 };
+#else
 	unsigned char *hpsizes;
 	int index, mask_index;
 #endif
-	struct slice_mask ret = { 0, 0 };
 	unsigned long i;
 #ifndef CONFIG_BIGMEM
 	u64 psizes;
@@ -180,16 +239,13 @@ static struct slice_mask slice_mask_for_size(struct mm_struct *mm, int psize)
 
 #ifndef CONFIG_BIGMEM
 	psizes = mm->context.low_slices_psize;
-#else
-	lpsizes = mm->context.low_slices_psize;
-#endif
 	for (i = 0; i < SLICE_NUM_LOW; i++)
-#ifndef CONFIG_BIGMEM
 		if (((psizes >> (i * 4)) & 0xf) == psize)
-#else
-		if (((lpsizes >> (i * 4)) & 0xf) == psize)
-#endif
 			ret.low_slices |= 1u << i;
+#else
+	ret->low_slices = 0;
+	bitmap_zero(ret->high_slices, SLICE_NUM_HIGH);
+#endif
 
 #ifndef CONFIG_BIGMEM
 	psizes = mm->context.high_slices_psize;
@@ -197,22 +253,40 @@ static struct slice_mask slice_mask_for_size(struct mm_struct *mm, int psize)
 		if (((psizes >> (i * 4)) & 0xf) == psize)
 			ret.high_slices |= 1u << i;
 #else
+	lpsizes = mm->context.low_slices_psize;
+	for (i = 0; i < SLICE_NUM_LOW; i++)
+		if (((lpsizes >> (i * 4)) & 0xf) == psize)
+			ret->low_slices |= 1u << i;
+#endif
+
+#ifndef CONFIG_BIGMEM
+	return ret;
+#else
 	hpsizes = mm->context.high_slices_psize;
 	for (i = 0; i < SLICE_NUM_HIGH; i++) {
 		mask_index = i & 0x1;
 		index = i >> 1;
 		if (((hpsizes[index] >> (mask_index * 4)) & 0xf) == psize)
-			ret.high_slices |= 1ul << i;
+			__set_bit(i, ret->high_slices);
 	}
 #endif
-
-	return ret;
 }
 
 static int slice_check_fit(struct slice_mask mask, struct slice_mask available)
 {
+#ifdef CONFIG_BIGMEM
+	DECLARE_BITMAP(result, SLICE_NUM_HIGH);
+
+	bitmap_and(result, mask.high_slices,
+		   available.high_slices, SLICE_NUM_HIGH);
+
+#endif
 	return (mask.low_slices & available.low_slices) == mask.low_slices &&
+#ifndef CONFIG_BIGMEM
 		(mask.high_slices & available.high_slices) == mask.high_slices;
+#else
+		bitmap_equal(result, mask.high_slices, SLICE_NUM_HIGH);
+#endif
 }
 
 static void slice_flush_segments(void *parm)
@@ -278,7 +352,7 @@ static void slice_convert(struct mm_struct *mm, struct slice_mask mask, int psiz
 	for (i = 0; i < SLICE_NUM_HIGH; i++) {
 		mask_index = i & 0x1;
 		index = i >> 1;
-		if (mask.high_slices & (1ul << i))
+		if (test_bit(i, mask.high_slices))
 			hpsizes[index] = (hpsizes[index] &
 					  ~(0xf << (mask_index * 4))) |
 				(((unsigned long)psize) << (mask_index * 4));
@@ -286,8 +360,13 @@ static void slice_convert(struct mm_struct *mm, struct slice_mask mask, int psiz
 #endif
 
 	slice_dbg(" lsps=%lx, hsps=%lx\n",
+#ifndef CONFIG_BIGMEM
 		  mm->context.low_slices_psize,
 		  mm->context.high_slices_psize);
+#else
+		  (unsigned long)mm->context.low_slices_psize,
+		  (unsigned long)mm->context.high_slices_psize);
+#endif
 
 	spin_unlock_irqrestore(&slice_convert_lock, flags);
 
@@ -323,7 +402,11 @@ full_search:
 		vma = find_vma(mm, addr);
 		BUG_ON(vma && (addr >= vma->vm_end));
 
+#ifndef CONFIG_BIGMEM
 		mask = slice_range_to_mask(addr, len);
+#else
+		slice_range_to_mask(addr, len, &mask);
+#endif
 		if (!slice_check_fit(mask, available)) {
 			if (addr < SLICE_LOW_TOP)
 				addr = _ALIGN_UP(addr + 1,  1ul << SLICE_LOW_SHIFT);
@@ -378,7 +461,11 @@ static unsigned long slice_find_area_topdown(struct mm_struct *mm,
 		/* make sure it can fit in the remaining address space */
 		if (addr > len) {
 			addr = _ALIGN_DOWN(addr - len, 1ul << pshift);
+#ifndef CONFIG_BIGMEM
 			mask = slice_range_to_mask(addr, len);
+#else
+			slice_range_to_mask(addr, len, &mask);
+#endif
 			if (slice_check_fit(mask, available) &&
 			    slice_area_is_free(mm, addr, len))
 					/* remember the address as a hint for
@@ -394,7 +481,11 @@ static unsigned long slice_find_area_topdown(struct mm_struct *mm,
 		addr = _ALIGN_DOWN(addr - len, 1ul << pshift);
 
 		/* Check for hit with different page size */
+#ifndef CONFIG_BIGMEM
 		mask = slice_range_to_mask(addr, len);
+#else
+		slice_range_to_mask(addr, len, &mask);
+#endif
 		if (!slice_check_fit(mask, available)) {
 			if (addr < SLICE_LOW_TOP)
 				addr = _ALIGN_DOWN(addr, 1ul << SLICE_LOW_SHIFT);
@@ -456,15 +547,38 @@ static unsigned long slice_find_area(struct mm_struct *mm, unsigned long len,
 		return slice_find_area_bottomup(mm, len, mask, psize, use_cache);
 }
 
+#ifndef CONFIG_BIGMEM
 #define or_mask(dst, src)	do {			\
 	(dst).low_slices |= (src).low_slices;		\
 	(dst).high_slices |= (src).high_slices;		\
 } while (0)
+#else
+static inline void slice_or_mask(struct slice_mask *dst, struct slice_mask *src)
+{
+	DECLARE_BITMAP(result, SLICE_NUM_HIGH);
+#endif
 
+#ifndef CONFIG_BIGMEM
 #define andnot_mask(dst, src)	do {			\
 	(dst).low_slices &= ~(src).low_slices;		\
 	(dst).high_slices &= ~(src).high_slices;	\
 } while (0)
+#else
+	dst->low_slices |= src->low_slices;
+	bitmap_or(result, dst->high_slices, src->high_slices, SLICE_NUM_HIGH);
+	bitmap_copy(dst->high_slices, result, SLICE_NUM_HIGH);
+}
+
+static inline void slice_andnot_mask(struct slice_mask *dst, struct slice_mask *src)
+{
+	DECLARE_BITMAP(result, SLICE_NUM_HIGH);
+
+	dst->low_slices &= ~src->low_slices;
+
+	bitmap_andnot(result, dst->high_slices, src->high_slices, SLICE_NUM_HIGH);
+	bitmap_copy(dst->high_slices, result, SLICE_NUM_HIGH);
+}
+#endif
 
 #ifdef CONFIG_PPC_64K_PAGES
 #define MMU_PAGE_BASE	MMU_PAGE_64K
@@ -476,15 +590,39 @@ unsigned long slice_get_unmapped_area(unsigned long addr, unsigned long len,
 				      unsigned long flags, unsigned int psize,
 				      int topdown, int use_cache)
 {
+#ifndef CONFIG_BIGMEM
 	struct slice_mask mask = {0, 0};
+#else
+	struct slice_mask mask;
+#endif
 	struct slice_mask good_mask;
+#ifndef CONFIG_BIGMEM
 	struct slice_mask potential_mask = {0,0} /* silence stupid warning */;
 	struct slice_mask compat_mask = {0, 0};
+#else
+	struct slice_mask potential_mask;
+	struct slice_mask compat_mask;
+#endif
 	int fixed = (flags & MAP_FIXED);
 	int pshift = max_t(int, mmu_psize_defs[psize].shift, PAGE_SHIFT);
 	struct mm_struct *mm = current->mm;
 	unsigned long newaddr;
 
+#ifdef CONFIG_BIGMEM
+	/*
+	 * init different masks
+	 */
+	mask.low_slices = 0;
+	bitmap_zero(mask.high_slices, SLICE_NUM_HIGH);
+
+	/* silence stupid warning */;
+	potential_mask.low_slices = 0;
+	bitmap_zero(potential_mask.high_slices, SLICE_NUM_HIGH);
+
+	compat_mask.low_slices = 0;
+	bitmap_zero(compat_mask.high_slices, SLICE_NUM_HIGH);
+
+#endif
 	/* Sanity checks */
 	BUG_ON(mm->task_size == 0);
 
@@ -514,7 +652,11 @@ unsigned long slice_get_unmapped_area(unsigned long addr, unsigned long len,
 	/* First make up a "good" mask of slices that have the right size
 	 * already
 	 */
+#ifndef CONFIG_BIGMEM
 	good_mask = slice_mask_for_size(mm, psize);
+#else
+	slice_mask_for_size(mm, psize, &good_mask);
+#endif
 	slice_print_mask(" good_mask", good_mask);
 
 	/*
@@ -539,16 +681,28 @@ unsigned long slice_get_unmapped_area(unsigned long addr, unsigned long len,
 #ifdef CONFIG_PPC_64K_PAGES
 	/* If we support combo pages, we can allow 64k pages in 4k slices */
 	if (psize == MMU_PAGE_64K) {
+#ifndef CONFIG_BIGMEM
 		compat_mask = slice_mask_for_size(mm, MMU_PAGE_4K);
+#else
+		slice_mask_for_size(mm, MMU_PAGE_4K, &compat_mask);
+#endif
 		if (fixed)
+#ifndef CONFIG_BIGMEM
 			or_mask(good_mask, compat_mask);
+#else
+			slice_or_mask(&good_mask, &compat_mask);
+#endif
 	}
 #endif
 
 	/* First check hint if it's valid or if we have MAP_FIXED */
 	if (addr != 0 || fixed) {
 		/* Build a mask for the requested range */
+#ifndef CONFIG_BIGMEM
 		mask = slice_range_to_mask(addr, len);
+#else
+		slice_range_to_mask(addr, len, &mask);
+#endif
 		slice_print_mask(" mask", mask);
 
 		/* Check if we fit in the good mask. If we do, we just return,
@@ -576,8 +730,13 @@ unsigned long slice_get_unmapped_area(unsigned long addr, unsigned long len,
 	/* We don't fit in the good mask, check what other slices are
 	 * empty and thus can be converted
 	 */
+#ifndef CONFIG_BIGMEM
 	potential_mask = slice_mask_for_free(mm);
 	or_mask(potential_mask, good_mask);
+#else
+	slice_mask_for_free(mm, &potential_mask);
+	slice_or_mask(&potential_mask, &good_mask);
+#endif
 	slice_print_mask(" potential", potential_mask);
 
 	if ((addr != 0 || fixed) && slice_check_fit(mask, potential_mask)) {
@@ -612,7 +771,11 @@ unsigned long slice_get_unmapped_area(unsigned long addr, unsigned long len,
 #ifdef CONFIG_PPC_64K_PAGES
 	if (addr == -ENOMEM && psize == MMU_PAGE_64K) {
 		/* retry the search with 4k-page slices included */
+#ifndef CONFIG_BIGMEM
 		or_mask(potential_mask, compat_mask);
+#else
+		slice_or_mask(&potential_mask, &compat_mask);
+#endif
 		addr = slice_find_area(mm, len, potential_mask, psize,
 				       topdown, use_cache);
 	}
@@ -621,14 +784,24 @@ unsigned long slice_get_unmapped_area(unsigned long addr, unsigned long len,
 	if (addr == -ENOMEM)
 		return -ENOMEM;
 
+#ifndef CONFIG_BIGMEM
 	mask = slice_range_to_mask(addr, len);
+#else
+	slice_range_to_mask(addr, len, &mask);
+#endif
 	slice_dbg(" found potential area at 0x%lx\n", addr);
 	slice_print_mask(" mask", mask);
 
  convert:
+#ifndef CONFIG_BIGMEM
 	andnot_mask(mask, good_mask);
 	andnot_mask(mask, compat_mask);
 	if (mask.low_slices || mask.high_slices) {
+#else
+	slice_andnot_mask(&mask, &good_mask);
+	slice_andnot_mask(&mask, &compat_mask);
+	if (mask.low_slices || !bitmap_empty(mask.high_slices, SLICE_NUM_HIGH)) {
+#endif
 		slice_convert(mm, mask, psize);
 		if (psize > MMU_PAGE_BASE)
 			on_each_cpu(slice_flush_segments, mm, 1);
@@ -771,8 +944,13 @@ void slice_set_user_psize(struct mm_struct *mm, unsigned int psize)
 #endif
 
 	slice_dbg(" lsps=%lx, hsps=%lx\n",
+#ifndef CONFIG_BIGMEM
 		  mm->context.low_slices_psize,
 		  mm->context.high_slices_psize);
+#else
+		  (unsigned long)mm->context.low_slices_psize,
+		  (unsigned long)mm->context.high_slices_psize);
+#endif
 
  bail:
 	spin_unlock_irqrestore(&slice_convert_lock, flags);
@@ -832,8 +1010,15 @@ void slice_set_psize(struct mm_struct *mm, unsigned long address,
 void slice_set_range_psize(struct mm_struct *mm, unsigned long start,
 			   unsigned long len, unsigned int psize)
 {
+#ifndef CONFIG_BIGMEM
 	struct slice_mask mask = slice_range_to_mask(start, len);
+#else
+	struct slice_mask mask;
+#endif
 
+#ifdef CONFIG_BIGMEM
+	slice_range_to_mask(start, len, &mask);
+#endif
 	slice_convert(mm, mask, psize);
 }
 
@@ -862,14 +1047,24 @@ int is_hugepage_only_range(struct mm_struct *mm, unsigned long addr,
 	struct slice_mask mask, available;
 	unsigned int psize = mm->context.user_psize;
 
+#ifndef CONFIG_BIGMEM
 	mask = slice_range_to_mask(addr, len);
 	available = slice_mask_for_size(mm, psize);
+#else
+	slice_range_to_mask(addr, len, &mask);
+	slice_mask_for_size(mm, psize, &available);
+#endif
 #ifdef CONFIG_PPC_64K_PAGES
 	/* We need to account for 4k slices too */
 	if (psize == MMU_PAGE_64K) {
 		struct slice_mask compat_mask;
+#ifndef CONFIG_BIGMEM
 		compat_mask = slice_mask_for_size(mm, MMU_PAGE_4K);
 		or_mask(available, compat_mask);
+#else
+		slice_mask_for_size(mm, MMU_PAGE_4K, &compat_mask);
+		slice_or_mask(&available, &compat_mask);
+#endif
 	}
 #endif
 

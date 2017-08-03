@@ -767,22 +767,35 @@ static void __init htab_initialize(void)
 
 void __init early_init_mmu(void)
 {
+#ifndef CONFIG_BIGMEM
 	/* Setup initial STAB address in the PACA */
 	get_paca()->stab_real = __pa((u64)&initial_stab);
 	get_paca()->stab_addr = (u64)&initial_stab;
 
+#endif
 	/* Initialize the MMU Hash table and create the linear mapping
+#ifndef CONFIG_BIGMEM
 	 * of memory. Has to be done before stab/slb initialization as
 	 * this is currently where the page size encoding is obtained
+#else
+	 * of memory. Has to be done before SLB initialization as this is
+	 * currently where the page size encoding is obtained.
+#endif
 	 */
 	htab_initialize();
 
+#ifndef CONFIG_BIGMEM
 	/* Initialize stab / SLB management except on iSeries
 	 */
+#else
+	/* Initialize SLB management */
+#endif
 	if (mmu_has_feature(MMU_FTR_SLB))
 		slb_initialize();
+#ifndef CONFIG_BIGMEM
 	else if (!firmware_has_feature(FW_FEATURE_ISERIES))
 		stab_initialize(get_paca()->stab_real);
+#endif
 }
 
 #ifdef CONFIG_SMP
@@ -792,14 +805,20 @@ void __cpuinit early_init_mmu_secondary(void)
 	if (!firmware_has_feature(FW_FEATURE_LPAR))
 		mtspr(SPRN_SDR1, _SDR1);
 
+#ifndef CONFIG_BIGMEM
 	/* Initialize STAB/SLB. We use a virtual address as it works
 	 * in real mode on pSeries and we want a virtual address on
 	 * iSeries anyway
 	 */
+#else
+	/* Initialize SLB */
+#endif
 	if (mmu_has_feature(MMU_FTR_SLB))
 		slb_initialize();
+#ifndef CONFIG_BIGMEM
 	else
 		stab_initialize(get_paca()->stab_addr);
+#endif
 }
 #endif /* CONFIG_SMP */
 
