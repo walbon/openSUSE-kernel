@@ -1361,7 +1361,8 @@ struct sched_rt_entity {
 #endif
 
 	struct sched_rt_entity *back;
-#ifdef CONFIG_RT_GROUP_SCHED
+#if 1 /* unconditionally enabled for kABI w/o CONFIG_RT_GROUP_SCHED */
+
 	struct sched_rt_entity	*parent;
 	/* rq on which this entity is (to be) queued: */
 	struct rt_rq		*rt_rq;
