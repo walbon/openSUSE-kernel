@@ -154,6 +154,7 @@ static void kvp_timeout_func(struct work_struct *dummy)
 	 */
 	kvp_respond_to_host(NULL, HV_E_FAIL);
 
+	pr_info("KVP: timeout after %d seconds\n", HV_UTIL_TIMEOUT);
 	hv_poll_channel(kvp_transaction.recv_channel, kvp_poll_wrapper);
 }
 
