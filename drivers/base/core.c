@@ -2054,6 +2054,9 @@ out:
 }
 EXPORT_SYMBOL_GPL(device_move);
 
+/* KABI hack */
+extern struct class * tpm_class;
+int tpm_class_shutdown(struct device *dev);
 /**
  * device_shutdown - call ->shutdown() on each device to shutdown.
  */
@@ -2094,11 +2097,14 @@ void device_shutdown(void)
 		pm_runtime_get_noresume(dev);
 		pm_runtime_barrier(dev);
 
-		if (dev->class && dev->class->shutdown) {
+#ifdef CONFIG_TCG_TPM
+		if (dev->class && (dev->class == tpm_class)) {
 			if (initcall_debug)
 				dev_info(dev, "shutdown\n");
-			dev->class->shutdown(dev);
-		} else if (dev->bus && dev->bus->shutdown) {
+			tpm_class_shutdown(dev);
+		} else
+#endif
+		       if (dev->bus && dev->bus->shutdown) {
 			if (initcall_debug)
 				dev_info(dev, "shutdown\n");
 			dev->bus->shutdown(dev);

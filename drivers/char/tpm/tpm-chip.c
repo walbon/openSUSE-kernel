@@ -136,7 +136,7 @@ static void tpm_dev_release(struct device *dev)
  * TPM2: sysfs uses an implicit lock on chip->ops, so this could race if TPM2
  * has sysfs support enabled before TPM sysfs's implicit locking is fixed.
  */
-static int tpm_class_shutdown(struct device *dev)
+int tpm_class_shutdown(struct device *dev)
 {
 	struct tpm_chip *chip = container_of(dev, struct tpm_chip, dev);
 
@@ -199,7 +199,6 @@ struct tpm_chip *tpmm_chip_alloc(struct device *dev,
 	dev_set_drvdata(dev, chip);
 
 	chip->dev.class = tpm_class;
-	chip->dev.class->shutdown = tpm_class_shutdown;
 	chip->dev.release = tpm_dev_release;
 	chip->dev.parent = dev;
 #ifdef CONFIG_ACPI
