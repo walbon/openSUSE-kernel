@@ -159,8 +159,9 @@ static void dump_dev_cap_flags2(struct mlx4_dev *dev, u64 flags)
 		[32] = "Loopback source checks support",
 		[33] = "RoCEv2 support",
 		[34] = "DMFS Sniffer support (UC & MC)",
-		[35] = "QinQ VST mode support",
-		[36] = "sl to vl mapping table change event support"
+		[35] = "Diag counters per port",
+		[36] = "QinQ VST mode support",
+		[37] = "sl to vl mapping table change event support",
 	};
 	int i;
 
