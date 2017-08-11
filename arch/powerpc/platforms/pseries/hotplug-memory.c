@@ -323,6 +323,19 @@ static int dlpar_remove_device_tree_lmb(struct of_drconf_cell *lmb)
 	return dlpar_update_device_tree_lmb(lmb);
 }
 
+static struct memory_block *lmb_to_memblock(struct of_drconf_cell *lmb)
+{
+	unsigned long section_nr;
+	struct mem_section *mem_sect;
+	struct memory_block *mem_block;
+
+	section_nr = pfn_to_section_nr(PFN_DOWN(lmb->base_addr));
+	mem_sect = __nr_to_section(section_nr);
+
+	mem_block = find_memory_block(mem_sect);
+	return mem_block;
+}
+
 #ifdef CONFIG_MEMORY_HOTREMOVE
 static int pseries_remove_memblock(unsigned long base, unsigned int memblock_size)
 {
@@ -415,19 +428,6 @@ static bool lmb_is_removable(struct of_drconf_cell *lmb)
 }
 
 static int dlpar_add_lmb(struct of_drconf_cell *);
-
-static struct memory_block *lmb_to_memblock(struct of_drconf_cell *lmb)
-{
-	unsigned long section_nr;
-	struct mem_section *mem_sect;
-	struct memory_block *mem_block;
-
-	section_nr = pfn_to_section_nr(PFN_DOWN(lmb->base_addr));
-	mem_sect = __nr_to_section(section_nr);
-
-	mem_block = find_memory_block(mem_sect);
-	return mem_block;
-}
 
 static int dlpar_remove_lmb(struct of_drconf_cell *lmb)
 {
@@ -737,6 +737,20 @@ static int dlpar_memory_remove_by_ic(u32 lmbs_to_remove, u32 drc_index,
 }
 #endif /* CONFIG_MEMORY_HOTREMOVE */
 
+static int dlpar_online_lmb(struct of_drconf_cell *lmb)
+{
+	struct memory_block *mem_block;
+	int rc;
+
+	mem_block = lmb_to_memblock(lmb);
+	if (!mem_block)
+		return -EINVAL;
+
+	rc = device_online(&mem_block->dev);
+	put_device(&mem_block->dev);
+	return rc;
+}
+
 static int dlpar_add_lmb(struct of_drconf_cell *lmb)
 {
 	unsigned long block_sz;
@@ -760,10 +774,18 @@ static int dlpar_add_lmb(struct of_drconf_cell *lmb)
 
 	/* Add the memory */
 	rc = add_memory(nid, lmb->base_addr, block_sz);
-	if (rc)
+	if (rc) {
 		dlpar_remove_device_tree_lmb(lmb);
-	else
+		return rc;
+	}
+
+	rc = dlpar_online_lmb(lmb);
+	if (rc) {
+		remove_memory(nid, lmb->base_addr, block_sz);
+		dlpar_remove_device_tree_lmb(lmb);
+	} else {
 		lmb->flags |= DRCONF_MEM_ASSIGNED;
+	}
 
 	return rc;
 }
