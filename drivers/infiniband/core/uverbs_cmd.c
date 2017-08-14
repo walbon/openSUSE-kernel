@@ -2346,8 +2346,9 @@ static int modify_qp(struct ib_uverbs_file *file,
 		goto out;
 	}
 
-	if (cmd->base.port_num < rdma_start_port(qp->device) ||
-	    cmd->base.port_num > rdma_end_port(qp->device))
+	if ((cmd->base.attr_mask & IB_QP_PORT) &&
+	    (cmd->base.port_num < rdma_start_port(qp->device) ||
+	     cmd->base.port_num > rdma_end_port(qp->device)))
 		goto release_qp;
 
 	attr->qp_state		  = cmd->base.qp_state;
