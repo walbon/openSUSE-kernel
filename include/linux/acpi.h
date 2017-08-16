@@ -1017,6 +1017,7 @@ static inline struct fwnode_handle *acpi_get_next_subnode(struct device *dev,
 #endif
 
 #ifdef CONFIG_ACPI_SPCR_TABLE
+extern bool qdf2400_e44_present;
 int parse_spcr(bool earlycon);
 #else
 static inline int parse_spcr(bool earlycon) { return 0; }
