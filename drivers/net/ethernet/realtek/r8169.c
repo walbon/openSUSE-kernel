@@ -2000,7 +2000,8 @@ static int rtl8169_set_speed(struct net_device *dev,
 		goto out;
 
 	if (netif_running(dev) && (autoneg == AUTONEG_ENABLE) &&
-	    (advertising & ADVERTISED_1000baseT_Full)) {
+	    (advertising & ADVERTISED_1000baseT_Full) &&
+	    !pci_is_pcie(tp->pci_dev)) {
 		mod_timer(&tp->timer, jiffies + RTL8169_PHY_TIMEOUT);
 	}
 out:
@@ -2322,6 +2323,13 @@ static void rtl8169_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 	}
 }
 
+static int rtl8169_nway_reset(struct net_device *dev)
+{
+	struct rtl8169_private *tp = netdev_priv(dev);
+
+	return mii_nway_restart(&tp->mii);
+}
+
 static const struct ethtool_ops rtl8169_ethtool_ops = {
 	.get_drvinfo		= rtl8169_get_drvinfo,
 	.get_regs_len		= rtl8169_get_regs_len,
@@ -2337,6 +2345,7 @@ static const struct ethtool_ops rtl8169_ethtool_ops = {
 	.get_sset_count		= rtl8169_get_sset_count,
 	.get_ethtool_stats	= rtl8169_get_ethtool_stats,
 	.get_ts_info		= ethtool_op_get_ts_info,
+	.nway_reset		= rtl8169_nway_reset,
 };
 
 static void rtl8169_get_mac_version(struct rtl8169_private *tp,
@@ -3895,7 +3904,7 @@ static void rtl8168h_1_hw_phy_config(struct rtl8169_private *tp)
 
 	/* disable phy pfm mode */
 	rtl_writephy(tp, 0x1f, 0x0a44);
-	rtl_w0w1_phy(tp, 0x14, 0x0000, 0x0080);
+	rtl_w0w1_phy(tp, 0x11, 0x0000, 0x0080);
 	rtl_writephy(tp, 0x1f, 0x0000);
 
 	/* Check ALDPS bit, disable it if enabled */
@@ -3948,7 +3957,7 @@ static void rtl8168h_2_hw_phy_config(struct rtl8169_private *tp)
 	data = (ioffset_p3<<12)|(ioffset_p2<<8)|(ioffset_p1<<4)|(ioffset_p0);
 
 	if ((ioffset_p3 != 0x0f) || (ioffset_p2 != 0x0f) ||
-	    (ioffset_p1 != 0x0f) || (ioffset_p0 == 0x0f)) {
+	    (ioffset_p1 != 0x0f) || (ioffset_p0 != 0x0f)) {
 		rtl_writephy(tp, 0x1f, 0x0bcf);
 		rtl_writephy(tp, 0x16, data);
 		rtl_writephy(tp, 0x1f, 0x0000);
@@ -3968,7 +3977,7 @@ static void rtl8168h_2_hw_phy_config(struct rtl8169_private *tp)
 
 	/* disable phy pfm mode */
 	rtl_writephy(tp, 0x1f, 0x0a44);
-	rtl_w0w1_phy(tp, 0x14, 0x0000, 0x0080);
+	rtl_w0w1_phy(tp, 0x11, 0x0000, 0x0080);
 	rtl_writephy(tp, 0x1f, 0x0000);
 
 	/* Check ALDPS bit, disable it if enabled */
@@ -5819,11 +5828,10 @@ static void rtl_hw_start_8168d_4(struct rtl8169_private *tp)
 	void __iomem *ioaddr = tp->mmio_addr;
 	struct pci_dev *pdev = tp->pci_dev;
 	static const struct ephy_info e_info_8168d_4[] = {
-		{ 0x0b, ~0,	0x48 },
-		{ 0x19, 0x20,	0x50 },
-		{ 0x0c, ~0,	0x20 }
+		{ 0x0b, 0x0000,	0x0048 },
+		{ 0x19, 0x0020,	0x0050 },
+		{ 0x0c, 0x0100,	0x0020 }
 	};
-	int i;
 
 	rtl_csi_access_enable_1(tp);
 
@@ -5831,13 +5839,7 @@ static void rtl_hw_start_8168d_4(struct rtl8169_private *tp)
 
 	RTL_W8(MaxTxPacketSize, TxPacketMax);
 
-	for (i = 0; i < ARRAY_SIZE(e_info_8168d_4); i++) {
-		const struct ephy_info *e = e_info_8168d_4 + i;
-		u16 w;
-
-		w = rtl_ephy_read(tp, e->offset);
-		rtl_ephy_write(tp, 0x03, (w & e->mask) | e->bits);
-	}
+	rtl_ephy_init(tp, e_info_8168d_4, ARRAY_SIZE(e_info_8168d_4));
 
 	rtl_enable_clock_request(pdev);
 }
@@ -6137,7 +6139,7 @@ static void rtl_hw_start_8168h_1(struct rtl8169_private *tp)
 	rtl_pcie_state_l2l3_enable(tp, false);
 
 	rtl_writephy(tp, 0x1f, 0x0c42);
-	rg_saw_cnt = rtl_readphy(tp, 0x13);
+	rg_saw_cnt = (rtl_readphy(tp, 0x13) & 0x3fff);
 	rtl_writephy(tp, 0x1f, 0x0000);
 	if (rg_saw_cnt > 0) {
 		u16 sw_cnt_1ms_ini;
@@ -6145,28 +6147,28 @@ static void rtl_hw_start_8168h_1(struct rtl8169_private *tp)
 		sw_cnt_1ms_ini = 16000000/rg_saw_cnt;
 		sw_cnt_1ms_ini &= 0x0fff;
 		data = r8168_mac_ocp_read(tp, 0xd412);
-		data &= 0x0fff;
+		data &= ~0x0fff;
 		data |= sw_cnt_1ms_ini;
 		r8168_mac_ocp_write(tp, 0xd412, data);
 	}
 
 	data = r8168_mac_ocp_read(tp, 0xe056);
-	data &= 0xf0;
-	data |= 0x07;
+	data &= ~0xf0;
+	data |= 0x70;
 	r8168_mac_ocp_write(tp, 0xe056, data);
 
 	data = r8168_mac_ocp_read(tp, 0xe052);
-	data &= 0x8008;
-	data |= 0x6000;
+	data &= ~0x6000;
+	data |= 0x8008;
 	r8168_mac_ocp_write(tp, 0xe052, data);
 
 	data = r8168_mac_ocp_read(tp, 0xe0d6);
-	data &= 0x01ff;
+	data &= ~0x01ff;
 	data |= 0x017f;
 	r8168_mac_ocp_write(tp, 0xe0d6, data);
 
 	data = r8168_mac_ocp_read(tp, 0xd420);
-	data &= 0x0fff;
+	data &= ~0x0fff;
 	data |= 0x047f;
 	r8168_mac_ocp_write(tp, 0xd420, data);
 
