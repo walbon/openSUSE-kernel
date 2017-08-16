@@ -1806,15 +1806,34 @@ static ssize_t btrfs_file_write_iter(struct kiocb *iocb,
 	bool sync = (file->f_flags & O_DSYNC) || IS_SYNC(file->f_mapping->host);
 	ssize_t err;
 	loff_t pos;
-	size_t count;
+	size_t count = iov_iter_count(from);
 	loff_t oldsize;
 	int clean_page = 0;
 
-	mutex_lock(&inode->i_mutex);
+	if (!mutex_trylock(&inode->i_mutex)) {
+		if (iocb->ki_flags & IOCB_NOWAIT)
+			return -EAGAIN;
+		mutex_lock(&inode->i_mutex);
+	}
+
 	err = generic_write_checks(iocb, from);
 	if (err <= 0) {
 		mutex_unlock(&inode->i_mutex);
 		return err;
+	}
+
+	pos = iocb->ki_pos;
+	if (iocb->ki_flags & IOCB_NOWAIT) {
+		/*
+		 * We will allocate space in case nodatacow is not set,
+		 * so bail
+		 */
+		if (!(BTRFS_I(inode)->flags & (BTRFS_INODE_NODATACOW |
+					      BTRFS_INODE_PREALLOC)) ||
+		    check_can_nocow(inode, pos, &count) <= 0) {
+			mutex_unlock(&inode->i_mutex);
+			return -EAGAIN;
+		}
 	}
 
 	current->backing_dev_info = inode_to_bdi(inode);
@@ -1844,8 +1863,6 @@ static ssize_t btrfs_file_write_iter(struct kiocb *iocb,
 	 */
 	update_time_for_write(inode);
 
-	pos = iocb->ki_pos;
-	count = iov_iter_count(from);
 	start_pos = round_down(pos, root->sectorsize);
 	oldsize = i_size_read(inode);
 	if (start_pos > oldsize) {
@@ -2985,13 +3002,19 @@ out:
 	return offset;
 }
 
+static int btrfs_file_open(struct inode *inode, struct file *filp)
+{
+	filp->f_mode |= FMODE_AIO_NOWAIT;
+	return generic_file_open(inode, filp);
+}
+
 const struct file_operations btrfs_file_operations = {
 	.llseek		= btrfs_file_llseek,
 	.read_iter      = generic_file_read_iter,
 	.splice_read	= generic_file_splice_read,
 	.write_iter	= btrfs_file_write_iter,
 	.mmap		= btrfs_file_mmap,
-	.open		= generic_file_open,
+	.open		= btrfs_file_open,
 	.release	= btrfs_release_file,
 	.fsync		= btrfs_sync_file,
 	.fallocate	= btrfs_fallocate,
