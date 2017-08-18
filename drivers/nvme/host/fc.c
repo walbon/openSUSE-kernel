@@ -2151,6 +2151,13 @@ nvme_fc_start_fcp_op(struct nvme_fc_ctrl *ctrl, struct nvme_fc_queue *queue,
 	u32 csn;
 	int ret;
 
+	/*
+	 * before attempting to send the io, check to see if we believe
+	 * the target device is present
+	 */
+	if (ctrl->rport->remoteport.port_state != FC_OBJSTATE_ONLINE)
+		return BLK_MQ_RQ_QUEUE_ERROR;
+
 	if (!nvme_fc_ctrl_get(ctrl))
 		return BLK_MQ_RQ_QUEUE_ERROR;
 
@@ -2224,8 +2231,7 @@ nvme_fc_start_fcp_op(struct nvme_fc_ctrl *ctrl, struct nvme_fc_queue *queue,
 
 		nvme_fc_ctrl_put(ctrl);
 
-		if (ctrl->rport->remoteport.port_state == FC_OBJSTATE_ONLINE &&
-				ret != -EBUSY)
+		if (ret != -EBUSY)
 			return BLK_MQ_RQ_QUEUE_ERROR;
 
 		if (op->rq)
