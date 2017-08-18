@@ -874,8 +874,6 @@ struct nvmet_fc_target_template {
 				struct nvmefc_tgt_fcp_req *fcpreq);
 	void (*fcp_req_release)(struct nvmet_fc_target_port *tgtport,
 				struct nvmefc_tgt_fcp_req *fcpreq);
-	void (*defer_rcv)(struct nvmet_fc_target_port *tgtport,
-				struct nvmefc_tgt_fcp_req *fcpreq);
 	int (*queue_create)(struct nvmet_fc_target_port *tgtport,
 				u64 connection_id, u16 qsize);
 	void (*queue_delete)(struct nvmet_fc_target_port *tgtport,
@@ -889,6 +887,10 @@ struct nvmet_fc_target_template {
 	u32	target_features;
 
 	u32	target_priv_sz;
+#ifndef __GENKSYMS__
+	void (*defer_rcv)(struct nvmet_fc_target_port *tgtport,
+				struct nvmefc_tgt_fcp_req *fcpreq);
+#endif
 };
 
 
