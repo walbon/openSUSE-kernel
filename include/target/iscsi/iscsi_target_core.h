@@ -799,6 +799,9 @@ struct iscsi_np {
 	void			*np_context;
 	struct iscsit_transport *np_transport;
 	struct list_head	np_list;
+#ifndef __GENKSYMS__
+	atomic_t		np_reset_count;
+#endif
 } ____cacheline_aligned;
 
 struct iscsi_tpg_np {

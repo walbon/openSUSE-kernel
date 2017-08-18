@@ -2228,10 +2228,9 @@ nvme_fc_start_fcp_op(struct nvme_fc_ctrl *ctrl, struct nvme_fc_queue *queue,
 				ret != -EBUSY)
 			return BLK_MQ_RQ_QUEUE_ERROR;
 
-		if (op->rq) {
-			blk_mq_stop_hw_queues(op->rq->q);
-			blk_mq_delay_queue(queue->hctx, NVMEFC_QUEUE_DELAY);
-		}
+		if (op->rq)
+			blk_mq_delay_run_hw_queue(queue->hctx, NVMEFC_QUEUE_DELAY);
+
 		return BLK_MQ_RQ_QUEUE_BUSY;
 	}
 
@@ -2437,17 +2436,20 @@ static int
 nvme_fc_create_io_queues(struct nvme_fc_ctrl *ctrl)
 {
 	struct nvmf_ctrl_options *opts = ctrl->ctrl.opts;
+	unsigned int nr_io_queues;
 	int ret;
 
-	ret = nvme_set_queue_count(&ctrl->ctrl, &opts->nr_io_queues);
+	nr_io_queues = min(min(opts->nr_io_queues, num_online_cpus()),
+				ctrl->lport->ops->max_hw_queues);
+	ret = nvme_set_queue_count(&ctrl->ctrl, &nr_io_queues);
 	if (ret) {
 		dev_info(ctrl->ctrl.device,
 			"set_queue_count failed: %d\n", ret);
 		return ret;
 	}
 
-	ctrl->queue_count = opts->nr_io_queues + 1;
-	if (!opts->nr_io_queues)
+	ctrl->queue_count = nr_io_queues + 1;
+	if (!nr_io_queues)
 		return 0;
 
 	nvme_fc_init_io_queues(ctrl);
@@ -2507,15 +2509,19 @@ static int
 nvme_fc_reinit_io_queues(struct nvme_fc_ctrl *ctrl)
 {
 	struct nvmf_ctrl_options *opts = ctrl->ctrl.opts;
+	unsigned int nr_io_queues;
 	int ret;
 
-	ret = nvme_set_queue_count(&ctrl->ctrl, &opts->nr_io_queues);
+	nr_io_queues = min(min(opts->nr_io_queues, num_online_cpus()),
+				ctrl->lport->ops->max_hw_queues);
+	ret = nvme_set_queue_count(&ctrl->ctrl, &nr_io_queues);
 	if (ret) {
 		dev_info(ctrl->ctrl.device,
 			"set_queue_count failed: %d\n", ret);
 		return ret;
 	}
 
+	ctrl->queue_count = nr_io_queues + 1;
 	/* check for io queues existing */
 	if (ctrl->queue_count == 1)
 		return 0;
@@ -2533,6 +2539,8 @@ nvme_fc_reinit_io_queues(struct nvme_fc_ctrl *ctrl)
 	ret = nvme_fc_connect_io_queues(ctrl, ctrl->ctrl.opts->queue_size);
 	if (ret)
 		goto out_delete_hw_queues;
+
+	blk_mq_update_nr_hw_queues(&ctrl->tag_set, nr_io_queues);
 
 	return 0;
 
@@ -3163,7 +3171,6 @@ nvme_fc_init_ctrl(struct device *dev, struct nvmf_ctrl_options *opts,
 	ctrl->queue_count = min_t(unsigned int,
 				opts->nr_io_queues,
 				lport->ops->max_hw_queues);
-	opts->nr_io_queues = ctrl->queue_count;	/* so opts has valid value */
 	ctrl->queue_count++;	/* +1 for admin queue */
 
 	ctrl->ctrl.sqsize = opts->queue_size - 1;
