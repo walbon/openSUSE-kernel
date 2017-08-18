@@ -1147,6 +1147,7 @@ static int qeth_l2_setup_netdev(struct qeth_card *card)
 	card->dev->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
 	if (card->info.type == QETH_CARD_TYPE_OSD && !card->info.guestlan) {
 		card->dev->hw_features = NETIF_F_IP_CSUM | NETIF_F_RXCSUM;
+		card->dev->vlan_features |= NETIF_F_IP_CSUM | NETIF_F_RXCSUM;
 		/* Turn on RX offloading per default */
 		card->dev->features |= NETIF_F_RXCSUM;
 	}
