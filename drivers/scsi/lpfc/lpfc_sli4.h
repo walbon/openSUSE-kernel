@@ -158,6 +158,7 @@ struct lpfc_queue {
 #define LPFC_MQ_REPOST		8
 #define LPFC_CQ_REPOST		64
 #define LPFC_RQ_REPOST		64
+#define LPFC_MAX_ISR_CQE	64
 #define LPFC_RELEASE_NOTIFICATION_INTERVAL	32  /* For WQs */
 	uint32_t queue_id;	/* Queue ID assigned by the hardware */
 	uint32_t assoc_qid;     /* Queue ID associated with, for CQ/WQ/MQ */
@@ -419,6 +420,20 @@ struct lpfc_hba_eq_hdl {
 #define LPFC_MULTI_CPU_AFFINITY 0xffffffff
 };
 
+/*BB Credit recovery value*/
+struct lpfc_bbscn_params {
+	uint32_t word0;
+#define lpfc_bbscn_min_SHIFT		0
+#define lpfc_bbscn_min_MASK		0x0000000F
+#define lpfc_bbscn_min_WORD		word0
+#define lpfc_bbscn_max_SHIFT		4
+#define lpfc_bbscn_max_MASK		0x0000000F
+#define lpfc_bbscn_max_WORD		word0
+#define lpfc_bbscn_def_SHIFT		8
+#define lpfc_bbscn_def_MASK		0x0000000F
+#define lpfc_bbscn_def_WORD		word0
+};
+
 /* Port Capabilities for SLI4 Parameters */
 struct lpfc_pc_sli4_params {
 	uint32_t supported;
@@ -550,6 +565,7 @@ struct lpfc_sli4_hba {
 	uint32_t ue_to_rp;
 	struct lpfc_register sli_intf;
 	struct lpfc_pc_sli4_params pc_sli4_params;
+	struct lpfc_bbscn_params bbscn_params;
 	struct msix_entry *msix_entries;
 	struct lpfc_hba_eq_hdl *hba_eq_hdl; /* HBA per-WQ handle */
 
@@ -631,8 +647,8 @@ struct lpfc_sli4_hba {
 	struct list_head lpfc_abts_nvmet_ctx_list;
 	struct list_head lpfc_abts_scsi_buf_list;
 	struct list_head lpfc_abts_nvme_buf_list;
-	struct list_head lpfc_nvmet_ctx_list;
 	struct list_head lpfc_nvmet_io_wait_list;
+	struct lpfc_nvmet_ctx_info *nvmet_ctx_info;
 	struct lpfc_sglq **lpfc_sglq_active_list;
 	struct list_head lpfc_rpi_hdr_list;
 	unsigned long *rpi_bmask;
@@ -663,7 +679,6 @@ struct lpfc_sli4_hba {
 	spinlock_t abts_nvme_buf_list_lock; /* list of aborted SCSI IOs */
 	spinlock_t abts_scsi_buf_list_lock; /* list of aborted SCSI IOs */
 	spinlock_t sgl_list_lock; /* list of aborted els IOs */
-	spinlock_t nvmet_io_lock;
 	spinlock_t nvmet_io_wait_lock; /* IOs waiting for ctx resources */
 	uint32_t physical_port;
 

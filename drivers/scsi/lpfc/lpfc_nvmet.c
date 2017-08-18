@@ -169,8 +169,10 @@ lpfc_nvmet_ctxbuf_post(struct lpfc_hba *phba, struct lpfc_nvmet_ctxbuf *ctx_buf)
 	struct lpfc_nvmet_tgtport *tgtp;
 	struct fc_frame_header *fc_hdr;
 	struct rqb_dmabuf *nvmebuf;
+	struct lpfc_nvmet_ctx_info *infop;
 	uint32_t *payload;
 	uint32_t size, oxid, sid, rc;
+	int cpu;
 	unsigned long iflag;
 
 	if (ctxp->txrdy) {
@@ -265,12 +267,16 @@ lpfc_nvmet_ctxbuf_post(struct lpfc_hba *phba, struct lpfc_nvmet_ctxbuf *ctx_buf)
 		return;
 	}
 	spin_unlock_irqrestore(&phba->sli4_hba.nvmet_io_wait_lock, iflag);
-
-	spin_lock_irqsave(&phba->sli4_hba.nvmet_io_lock, iflag);
-	list_add_tail(&ctx_buf->list,
-		      &phba->sli4_hba.lpfc_nvmet_ctx_list);
-	phba->sli4_hba.nvmet_ctx_cnt++;
-	spin_unlock_irqrestore(&phba->sli4_hba.nvmet_io_lock, iflag);
+	/*
+	 * Use the CPU context list, from the MRQ the IO was received on
+	 * (ctxp->idx), to save context structure.
+	 */
+	cpu = smp_processor_id();
+	infop = lpfc_get_ctx_list(phba, cpu, ctxp->idx);
+	spin_lock_irqsave(&infop->nvmet_ctx_list_lock, iflag);
+	list_add_tail(&ctx_buf->list, &infop->nvmet_ctx_list);
+	infop->nvmet_ctx_list_cnt++;
+	spin_unlock_irqrestore(&infop->nvmet_ctx_list_lock, iflag);
 }
 
 #ifdef CONFIG_SCSI_LPFC_DEBUG_FS
@@ -550,7 +556,7 @@ lpfc_nvmet_xmt_fcp_op_cmp(struct lpfc_hba *phba, struct lpfc_iocbq *cmdwqe,
 		/* lpfc_nvmet_xmt_fcp_release() will recycle the context */
 	} else {
 		ctxp->entry_cnt++;
-		start_clean = offsetof(struct lpfc_iocbq, wqe);
+		start_clean = offsetof(struct lpfc_iocbq, iocb_flag);
 		memset(((char *)cmdwqe) + start_clean, 0,
 		       (sizeof(struct lpfc_iocbq) - start_clean));
 #ifdef CONFIG_SCSI_LPFC_DEBUG_FS
@@ -839,12 +845,31 @@ lpfc_nvmet_xmt_fcp_release(struct nvmet_fc_target_port *tgtport,
 	lpfc_nvmet_ctxbuf_post(phba, ctxp->ctxbuf);
 }
 
+static void
+lpfc_nvmet_defer_rcv(struct nvmet_fc_target_port *tgtport,
+		     struct nvmefc_tgt_fcp_req *rsp)
+{
+	struct lpfc_nvmet_tgtport *tgtp;
+	struct lpfc_nvmet_rcv_ctx *ctxp =
+		container_of(rsp, struct lpfc_nvmet_rcv_ctx, ctx.fcp_req);
+	struct rqb_dmabuf *nvmebuf = ctxp->rqb_buffer;
+	struct lpfc_hba *phba = ctxp->phba;
+
+	lpfc_nvmeio_data(phba, "NVMET DEFERRCV: xri x%x sz %d CPU %02x\n",
+			 ctxp->oxid, ctxp->size, smp_processor_id());
+
+	tgtp = phba->targetport->private;
+	atomic_inc(&tgtp->rcv_fcp_cmd_defer);
+	lpfc_rq_buf_free(phba, &nvmebuf->hbuf); /* repost */
+}
+
 static struct nvmet_fc_target_template lpfc_tgttemplate = {
 	.targetport_delete = lpfc_nvmet_targetport_delete,
 	.xmt_ls_rsp     = lpfc_nvmet_xmt_ls_rsp,
 	.fcp_op         = lpfc_nvmet_xmt_fcp_op,
 	.fcp_abort      = lpfc_nvmet_xmt_fcp_abort,
 	.fcp_req_release = lpfc_nvmet_xmt_fcp_release,
+	.defer_rcv	= lpfc_nvmet_defer_rcv,
 
 	.max_hw_queues  = 1,
 	.max_sgl_segments = LPFC_NVMET_DEFAULT_SEGS,
@@ -861,30 +886,46 @@ void
 lpfc_nvmet_cleanup_io_context(struct lpfc_hba *phba)
 {
 	struct lpfc_nvmet_ctxbuf *ctx_buf, *next_ctx_buf;
+	struct lpfc_nvmet_ctx_info *infop;
+	int i, j;
 	unsigned long flags;
 
-	list_for_each_entry_safe(
-		ctx_buf, next_ctx_buf,
-		&phba->sli4_hba.lpfc_nvmet_ctx_list, list) {
-		spin_lock_irqsave(
-			&phba->sli4_hba.abts_nvme_buf_list_lock, flags);
-		list_del_init(&ctx_buf->list);
-		spin_unlock_irqrestore(
-			&phba->sli4_hba.abts_nvme_buf_list_lock, flags);
-		__lpfc_clear_active_sglq(phba,
-					 ctx_buf->sglq->sli4_lxritag);
-		ctx_buf->sglq->state = SGL_FREED;
-		ctx_buf->sglq->ndlp = NULL;
+	/* The first context list, MRQ 0 CPU 0 */
+	infop = phba->sli4_hba.nvmet_ctx_info;
+	if (!infop)
+		return;
+	/* Cycle the the entire CPU context list for every MRQ */
+	for (i = 0; i < phba->cfg_nvmet_mrq; i++) {
+		for (j = 0; j < phba->sli4_hba.num_present_cpu; j++) {
+			spin_lock_irqsave(&infop->nvmet_ctx_list_lock, flags);
+			list_for_each_entry_safe(ctx_buf, next_ctx_buf,
+						 &infop->nvmet_ctx_list, list) {
+				spin_lock(
+				    &phba->sli4_hba.abts_nvme_buf_list_lock);
+				list_del_init(&ctx_buf->list);
+				spin_unlock(
+				    &phba->sli4_hba.abts_nvme_buf_list_lock);
+				__lpfc_clear_active_sglq(
+					phba, ctx_buf->sglq->sli4_lxritag);
+				ctx_buf->sglq->state = SGL_FREED;
+				ctx_buf->sglq->ndlp = NULL;
 
-		spin_lock_irqsave(&phba->sli4_hba.sgl_list_lock, flags);
-		list_add_tail(&ctx_buf->sglq->list,
-			      &phba->sli4_hba.lpfc_nvmet_sgl_list);
-		spin_unlock_irqrestore(&phba->sli4_hba.sgl_list_lock,
-				       flags);
+				spin_lock(&phba->sli4_hba.sgl_list_lock);
+				list_add_tail(
+					&ctx_buf->sglq->list,
+					&phba->sli4_hba.lpfc_nvmet_sgl_list);
+				spin_unlock(&phba->sli4_hba.sgl_list_lock);
 
-		lpfc_sli_release_iocbq(phba, ctx_buf->iocbq);
-		kfree(ctx_buf->context);
+				lpfc_sli_release_iocbq(phba, ctx_buf->iocbq);
+				kfree(ctx_buf->context);
+			}
+			spin_unlock_irqrestore(&infop->nvmet_ctx_list_lock,
+					       flags);
+			infop++; /* next */
+		}
 	}
+	kfree(phba->sli4_hba.nvmet_ctx_info);
+	phba->sli4_hba.nvmet_ctx_info = NULL;
 }
 
 int
@@ -893,15 +934,71 @@ lpfc_nvmet_setup_io_context(struct lpfc_hba *phba)
 	struct lpfc_nvmet_ctxbuf *ctx_buf;
 	struct lpfc_iocbq *nvmewqe;
 	union lpfc_wqe128 *wqe;
-	int i;
+	struct lpfc_nvmet_ctx_info *last_infop;
+	struct lpfc_nvmet_ctx_info *infop;
+	int i, j, idx;
 
 	lpfc_printf_log(phba, KERN_INFO, LOG_NVME,
 			"6403 Allocate NVMET resources for %d XRIs\n",
 			phba->sli4_hba.nvmet_xri_cnt);
 
+	phba->sli4_hba.nvmet_ctx_info = kcalloc(
+		phba->sli4_hba.num_present_cpu * phba->cfg_nvmet_mrq,
+		sizeof(struct lpfc_nvmet_ctx_info), GFP_KERNEL);
+	if (!phba->sli4_hba.nvmet_ctx_info) {
+		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+				"6419 Failed allocate memory for "
+				"nvmet context lists\n");
+		return -ENOMEM;
+	}
+
+	/*
+	 * Assuming X CPUs in the system, and Y MRQs, allocate some
+	 * lpfc_nvmet_ctx_info structures as follows:
+	 *
+	 * cpu0/mrq0 cpu1/mrq0 ... cpuX/mrq0
+	 * cpu0/mrq1 cpu1/mrq1 ... cpuX/mrq1
+	 * ...
+	 * cpuX/mrqY cpuX/mrqY ... cpuX/mrqY
+	 *
+	 * Each line represents a MRQ "silo" containing an entry for
+	 * every CPU.
+	 *
+	 * MRQ X is initially assumed to be associated with CPU X, thus
+	 * contexts are initially distributed across all MRQs using
+	 * the MRQ index (N) as follows cpuN/mrqN. When contexts are
+	 * freed, the are freed to the MRQ silo based on the CPU number
+	 * of the IO completion. Thus a context that was allocated for MRQ A
+	 * whose IO completed on CPU B will be freed to cpuB/mrqA.
+	 */
+	infop = phba->sli4_hba.nvmet_ctx_info;
+	for (i = 0; i < phba->sli4_hba.num_present_cpu; i++) {
+		for (j = 0; j < phba->cfg_nvmet_mrq; j++) {
+			INIT_LIST_HEAD(&infop->nvmet_ctx_list);
+			spin_lock_init(&infop->nvmet_ctx_list_lock);
+			infop->nvmet_ctx_list_cnt = 0;
+			infop++;
+		}
+	}
+
+	/*
+	 * Setup the next CPU context info ptr for each MRQ.
+	 * MRQ 0 will cycle thru CPUs 0 - X seperately from
+	 * MRQ 1 cycling thru CPUs 0 - X, and so on.
+	 */
+	for (j = 0; j < phba->cfg_nvmet_mrq; j++) {
+		last_infop = lpfc_get_ctx_list(phba, 0, j);
+		for (i = phba->sli4_hba.num_present_cpu - 1;  i >= 0; i--) {
+			infop = lpfc_get_ctx_list(phba, i, j);
+			infop->nvmet_ctx_next_cpu = last_infop;
+			last_infop = infop;
+		}
+	}
+
 	/* For all nvmet xris, allocate resources needed to process a
 	 * received command on a per xri basis.
 	 */
+	idx = 0;
 	for (i = 0; i < phba->sli4_hba.nvmet_xri_cnt; i++) {
 		ctx_buf = kzalloc(sizeof(*ctx_buf), GFP_KERNEL);
 		if (!ctx_buf) {
@@ -938,7 +1035,6 @@ lpfc_nvmet_setup_io_context(struct lpfc_hba *phba)
 		/* Word 7 */
 		bf_set(wqe_ct, &wqe->generic.wqe_com, SLI4_CT_RPI);
 		bf_set(wqe_class, &wqe->generic.wqe_com, CLASS3);
-		bf_set(wqe_pu, &wqe->generic.wqe_com, 1);
 		/* Word 10 */
 		bf_set(wqe_nvme, &wqe->fcp_tsend.wqe_com, 1);
 		bf_set(wqe_ebde_cnt, &wqe->generic.wqe_com, 0);
@@ -956,12 +1052,35 @@ lpfc_nvmet_setup_io_context(struct lpfc_hba *phba)
 					"6407 Ran out of NVMET XRIs\n");
 			return -ENOMEM;
 		}
-		spin_lock(&phba->sli4_hba.nvmet_io_lock);
-		list_add_tail(&ctx_buf->list,
-			      &phba->sli4_hba.lpfc_nvmet_ctx_list);
-		spin_unlock(&phba->sli4_hba.nvmet_io_lock);
+
+		/*
+		 * Add ctx to MRQidx context list. Our initial assumption
+		 * is MRQidx will be associated with CPUidx. This association
+		 * can change on the fly.
+		 */
+		infop = lpfc_get_ctx_list(phba, idx, idx);
+		spin_lock(&infop->nvmet_ctx_list_lock);
+		list_add_tail(&ctx_buf->list, &infop->nvmet_ctx_list);
+		infop->nvmet_ctx_list_cnt++;
+		spin_unlock(&infop->nvmet_ctx_list_lock);
+
+		/* Spread ctx structures evenly across all MRQs */
+		idx++;
+		if (idx >= phba->cfg_nvmet_mrq)
+			idx = 0;
 	}
-	phba->sli4_hba.nvmet_ctx_cnt = phba->sli4_hba.nvmet_xri_cnt;
+
+	infop = phba->sli4_hba.nvmet_ctx_info;
+	for (j = 0; j < phba->cfg_nvmet_mrq; j++) {
+		for (i = 0; i < phba->sli4_hba.num_present_cpu; i++) {
+			lpfc_printf_log(phba, KERN_INFO, LOG_NVME | LOG_INIT,
+					"6408 TOTAL NVMET ctx for CPU %d "
+					"MRQ %d: cnt %d nextcpu %p\n",
+					i, j, infop->nvmet_ctx_list_cnt,
+					infop->nvmet_ctx_next_cpu);
+			infop++;
+		}
+	}
 	return 0;
 }
 
@@ -1327,10 +1446,66 @@ dropit:
 #endif
 }
 
+static struct lpfc_nvmet_ctxbuf *
+lpfc_nvmet_replenish_context(struct lpfc_hba *phba,
+			     struct lpfc_nvmet_ctx_info *current_infop)
+{
+	struct lpfc_nvmet_ctxbuf *ctx_buf = NULL;
+	struct lpfc_nvmet_ctx_info *get_infop;
+	int i;
+
+	/*
+	 * The current_infop for the MRQ a NVME command IU was received
+	 * on is empty. Our goal is to replenish this MRQs context
+	 * list from a another CPUs.
+	 *
+	 * First we need to pick a context list to start looking on.
+	 * nvmet_ctx_start_cpu has available context the last time
+	 * we needed to replenish this CPU where nvmet_ctx_next_cpu
+	 * is just the next sequential CPU for this MRQ.
+	 */
+	if (current_infop->nvmet_ctx_start_cpu)
+		get_infop = current_infop->nvmet_ctx_start_cpu;
+	else
+		get_infop = current_infop->nvmet_ctx_next_cpu;
+
+	for (i = 0; i < phba->sli4_hba.num_present_cpu; i++) {
+		if (get_infop == current_infop) {
+			get_infop = get_infop->nvmet_ctx_next_cpu;
+			continue;
+		}
+		spin_lock(&get_infop->nvmet_ctx_list_lock);
+
+		/* Just take the entire context list, if there are any */
+		if (get_infop->nvmet_ctx_list_cnt) {
+			list_splice(&get_infop->nvmet_ctx_list,
+				    &current_infop->nvmet_ctx_list);
+			INIT_LIST_HEAD(&get_infop->nvmet_ctx_list);
+			current_infop->nvmet_ctx_list_cnt =
+				get_infop->nvmet_ctx_list_cnt - 1;
+			get_infop->nvmet_ctx_list_cnt = 0;
+			spin_unlock(&get_infop->nvmet_ctx_list_lock);
+
+			current_infop->nvmet_ctx_start_cpu = get_infop;
+			list_remove_head(&current_infop->nvmet_ctx_list,
+					 ctx_buf, struct lpfc_nvmet_ctxbuf,
+					 list);
+			return ctx_buf;
+		}
+
+		/* Otherwise, move on to the next CPU for this MRQ */
+		spin_unlock(&get_infop->nvmet_ctx_list_lock);
+		get_infop = get_infop->nvmet_ctx_next_cpu;
+	}
+
+	/* Nothing found, all contexts for the MRQ are in-flight */
+	return NULL;
+}
+
 /**
  * lpfc_nvmet_unsol_fcp_buffer - Process an unsolicited event data buffer
  * @phba: pointer to lpfc hba data structure.
- * @pring: pointer to a SLI ring.
+ * @idx: relative index of MRQ vector
  * @nvmebuf: pointer to lpfc nvme command HBQ data structure.
  *
  * This routine is used for processing the WQE associated with a unsolicited
@@ -1342,7 +1517,7 @@ dropit:
  **/
 static void
 lpfc_nvmet_unsol_fcp_buffer(struct lpfc_hba *phba,
-			    struct lpfc_sli_ring *pring,
+			    uint32_t idx,
 			    struct rqb_dmabuf *nvmebuf,
 			    uint64_t isr_timestamp)
 {
@@ -1351,9 +1526,11 @@ lpfc_nvmet_unsol_fcp_buffer(struct lpfc_hba *phba,
 	struct lpfc_nvmet_tgtport *tgtp;
 	struct fc_frame_header *fc_hdr;
 	struct lpfc_nvmet_ctxbuf *ctx_buf;
+	struct lpfc_nvmet_ctx_info *current_infop;
 	uint32_t *payload;
 	uint32_t size, oxid, sid, rc, qno;
 	unsigned long iflag;
+	int current_cpu;
 #ifdef CONFIG_SCSI_LPFC_DEBUG_FS
 	uint32_t id;
 #endif
@@ -1369,13 +1546,24 @@ lpfc_nvmet_unsol_fcp_buffer(struct lpfc_hba *phba,
 		goto dropit;
 	}
 
-	spin_lock_irqsave(&phba->sli4_hba.nvmet_io_lock, iflag);
-	if (phba->sli4_hba.nvmet_ctx_cnt) {
-		list_remove_head(&phba->sli4_hba.lpfc_nvmet_ctx_list,
+	/*
+	 * Get a pointer to the context list for this MRQ based on
+	 * the CPU this MRQ IRQ is associated with. If the CPU association
+	 * changes from our initial assumption, the context list could
+	 * be empty, thus it would need to be replenished with the
+	 * context list from another CPU for this MRQ.
+	 */
+	current_cpu = smp_processor_id();
+	current_infop = lpfc_get_ctx_list(phba, current_cpu, idx);
+	spin_lock_irqsave(&current_infop->nvmet_ctx_list_lock, iflag);
+	if (current_infop->nvmet_ctx_list_cnt) {
+		list_remove_head(&current_infop->nvmet_ctx_list,
 				 ctx_buf, struct lpfc_nvmet_ctxbuf, list);
-		phba->sli4_hba.nvmet_ctx_cnt--;
+		current_infop->nvmet_ctx_list_cnt--;
+	} else {
+		ctx_buf = lpfc_nvmet_replenish_context(phba, current_infop);
 	}
-	spin_unlock_irqrestore(&phba->sli4_hba.nvmet_io_lock, iflag);
+	spin_unlock_irqrestore(&current_infop->nvmet_ctx_list_lock, iflag);
 
 	fc_hdr = (struct fc_frame_header *)(nvmebuf->hbuf.virt);
 	oxid = be16_to_cpu(fc_hdr->fh_ox_id);
@@ -1427,6 +1615,7 @@ lpfc_nvmet_unsol_fcp_buffer(struct lpfc_hba *phba,
 	ctxp->size = size;
 	ctxp->oxid = oxid;
 	ctxp->sid = sid;
+	ctxp->idx = idx;
 	ctxp->state = LPFC_NVMET_STE_RCV;
 	ctxp->entry_cnt = 1;
 	ctxp->flag = 0;
@@ -1464,6 +1653,17 @@ lpfc_nvmet_unsol_fcp_buffer(struct lpfc_hba *phba,
 	if (rc == 0) {
 		atomic_inc(&tgtp->rcv_fcp_cmd_out);
 		lpfc_rq_buf_free(phba, &nvmebuf->hbuf); /* repost */
+		return;
+	}
+
+	/* Processing of FCP command is deferred */
+	if (rc == -EOVERFLOW) {
+		lpfc_nvmeio_data(phba,
+				 "NVMET RCV BUSY: xri x%x sz %d from %06x\n",
+				 oxid, size, sid);
+		/* defer reposting rcv buffer till .defer_rcv callback */
+		ctxp->rqb_buffer = nvmebuf;
+		atomic_inc(&tgtp->rcv_fcp_cmd_out);
 		return;
 	}
 
@@ -1524,7 +1724,7 @@ lpfc_nvmet_unsol_ls_event(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 /**
  * lpfc_nvmet_unsol_fcp_event - Process an unsolicited event from an nvme nport
  * @phba: pointer to lpfc hba data structure.
- * @pring: pointer to a SLI ring.
+ * @idx: relative index of MRQ vector
  * @nvmebuf: pointer to received nvme data structure.
  *
  * This routine is used to process an unsolicited event received from a SLI
@@ -1535,7 +1735,7 @@ lpfc_nvmet_unsol_ls_event(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
  **/
 void
 lpfc_nvmet_unsol_fcp_event(struct lpfc_hba *phba,
-			   struct lpfc_sli_ring *pring,
+			   uint32_t idx,
 			   struct rqb_dmabuf *nvmebuf,
 			   uint64_t isr_timestamp)
 {
@@ -1543,7 +1743,7 @@ lpfc_nvmet_unsol_fcp_event(struct lpfc_hba *phba,
 		lpfc_rq_buf_free(phba, &nvmebuf->hbuf);
 		return;
 	}
-	lpfc_nvmet_unsol_fcp_buffer(phba, pring, nvmebuf,
+	lpfc_nvmet_unsol_fcp_buffer(phba, idx, nvmebuf,
 				    isr_timestamp);
 }
 
@@ -1796,6 +1996,7 @@ lpfc_nvmet_prep_fcp_wqe(struct lpfc_hba *phba,
 		       nvmewqe->sli4_xritag);
 
 		/* Word 7 */
+		bf_set(wqe_pu, &wqe->fcp_tsend.wqe_com, 1);
 		bf_set(wqe_cmnd, &wqe->fcp_tsend.wqe_com, CMD_FCP_TSEND64_WQE);
 
 		/* Word 8 */
@@ -1904,6 +2105,7 @@ lpfc_nvmet_prep_fcp_wqe(struct lpfc_hba *phba,
 		       nvmewqe->sli4_xritag);
 
 		/* Word 7 */
+		bf_set(wqe_pu, &wqe->fcp_treceive.wqe_com, 1);
 		bf_set(wqe_ar, &wqe->fcp_treceive.wqe_com, 0);
 		bf_set(wqe_cmnd, &wqe->fcp_treceive.wqe_com,
 		       CMD_FCP_TRECEIVE64_WQE);
@@ -1987,6 +2189,7 @@ lpfc_nvmet_prep_fcp_wqe(struct lpfc_hba *phba,
 		       nvmewqe->sli4_xritag);
 
 		/* Word 7 */
+		bf_set(wqe_pu, &wqe->fcp_trsp.wqe_com, 0);
 		bf_set(wqe_ag, &wqe->fcp_trsp.wqe_com, 1);
 		bf_set(wqe_cmnd, &wqe->fcp_trsp.wqe_com, CMD_FCP_TRSP64_WQE);
 
