@@ -351,6 +351,11 @@ struct nvme_fc_remote_port {
  *       indicating an FC transport Aborted status.
  *       Entrypoint is Mandatory.
  *
+ * @defer_rcv:  Called by the transport to signal the LLLD that it has
+ *       begun processing of a previously received NVME CMD IU. The LLDD
+ *       is now free to re-use the rcv buffer associated with the
+ *       nvmefc_tgt_fcp_req.
+ *
  * @max_hw_queues:  indicates the maximum number of hw queues the LLDD
  *       supports for cpu affinitization.
  *       Value is Mandatory. Must be at least 1.
@@ -882,6 +887,10 @@ struct nvmet_fc_target_template {
 	u32	target_features;
 
 	u32	target_priv_sz;
+#ifndef __GENKSYMS__
+	void (*defer_rcv)(struct nvmet_fc_target_port *tgtport,
+				struct nvmefc_tgt_fcp_req *fcpreq);
+#endif
 };
 
 
