@@ -8,7 +8,7 @@
 #ifndef _ASM_S390_DIAG_H
 #define _ASM_S390_DIAG_H
 
-#include <linux/if_ether.h>
+#include <uapi/linux/if_ether.h>
 #include <linux/percpu.h>
 
 enum diag_stat_enum {
