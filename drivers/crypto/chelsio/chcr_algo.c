@@ -171,6 +171,8 @@ int chcr_handle_resp(struct crypto_async_request *req, unsigned char *input,
 			kfree_skb(ctx_req.ctx.reqctx->skb);
 			ctx_req.ctx.reqctx->skb = NULL;
 		}
+		free_new_sg(ctx_req.ctx.reqctx->newdstsg);
+		ctx_req.ctx.reqctx->newdstsg = NULL;
 		if (ctx_req.ctx.reqctx->verify == VERIFY_SW) {
 			chcr_verify_tag(ctx_req.req.aead_req, input,
 					&err);
@@ -1070,6 +1072,8 @@ static int chcr_handle_cipher_resp(struct ablkcipher_request *req,
 	chcr_send_wr(skb);
 	return 0;
 complete:
+	free_new_sg(reqctx->newdstsg);
+	reqctx->newdstsg = NULL;
 	req->base.complete(&req->base, err);
 	return err;
 }
@@ -1085,7 +1089,7 @@ static int process_cipher(struct ablkcipher_request *req,
 	struct chcr_context *ctx = crypto_ablkcipher_ctx(tfm);
 	struct ablk_ctx *ablkctx = ABLK_CTX(ctx);
 	struct	cipher_wr_param wrparam;
-	int bytes, err = -EINVAL;
+	int bytes, nents, err = -EINVAL;
 
 	reqctx->newdstsg = NULL;
 	reqctx->processed = 0;
@@ -1099,7 +1103,14 @@ static int process_cipher(struct ablkcipher_request *req,
 		goto error;
 	}
 	wrparam.srcsg = req->src;
-	reqctx->dstsg = req->dst;
+	if (is_newsg(req->dst, &nents)) {
+		reqctx->newdstsg = alloc_new_sg(req->dst, nents);
+		if (IS_ERR(reqctx->newdstsg))
+			return PTR_ERR(reqctx->newdstsg);
+		reqctx->dstsg = reqctx->newdstsg;
+	} else {
+		reqctx->dstsg = req->dst;
+	}
 	bytes = chcr_sg_ent_in_wr(wrparam.srcsg, reqctx->dstsg, MIN_CIPHER_SG,
 				 SPACE_LEFT(ablkctx->enckey_len),
 				 &wrparam.snent,
@@ -1152,6 +1163,8 @@ static int process_cipher(struct ablkcipher_request *req,
 
 	return 0;
 error:
+	free_new_sg(reqctx->newdstsg);
+	reqctx->newdstsg = NULL;
 	return err;
 }
 
@@ -1809,6 +1822,63 @@ static void chcr_hmac_cra_exit(struct crypto_tfm *tfm)
 	}
 }
 
+static int is_newsg(struct scatterlist *sgl, unsigned int *newents)
+{
+	int nents = 0;
+	int ret = 0;
+
+	while (sgl) {
+		if (sgl->length > CHCR_SG_SIZE)
+			ret = 1;
+		nents += DIV_ROUND_UP(sgl->length, CHCR_SG_SIZE);
+		sgl = sg_next(sgl);
+	}
+	*newents = nents;
+	return ret;
+}
+
+static inline void free_new_sg(struct scatterlist *sgl)
+{
+	kfree(sgl);
+}
+
+static struct scatterlist *alloc_new_sg(struct scatterlist *sgl,
+				       unsigned int nents)
+{
+	struct scatterlist *newsg, *sg;
+	int i, len, processed = 0;
+	struct page *spage;
+	int offset;
+
+	newsg = kmalloc_array(nents, sizeof(struct scatterlist), GFP_KERNEL);
+	if (!newsg)
+		return ERR_PTR(-ENOMEM);
+	sg = newsg;
+	sg_init_table(sg, nents);
+	offset = sgl->offset;
+	spage = sg_page(sgl);
+	for (i = 0; i < nents; i++) {
+		len = min_t(u32, sgl->length - processed, CHCR_SG_SIZE);
+		sg_set_page(sg, spage, len, offset);
+		processed += len;
+		offset += len;
+		if (offset >= PAGE_SIZE) {
+			offset = offset % PAGE_SIZE;
+			spage++;
+		}
+		if (processed == sgl->length) {
+			processed = 0;
+			sgl = sg_next(sgl);
+			if (!sgl)
+				break;
+			spage = sg_page(sgl);
+			offset = sgl->offset;
+		}
+		sg = sg_next(sg);
+	}
+	return newsg;
+}
+
 static int chcr_aead_need_fallback(struct aead_request *req, int src_nent,
 				   int aadmax, int wrlen,
 				   unsigned short op_type)
@@ -1858,7 +1928,7 @@ static struct sk_buff *create_authenc_wr(struct aead_request *req,
 	struct scatterlist *src;
 	unsigned int frags = 0, transhdr_len;
 	unsigned int ivsize = crypto_aead_ivsize(tfm), dst_size = 0;
-	unsigned int   kctx_len = 0;
+	unsigned int   kctx_len = 0, nents;
 	unsigned short stop_offset = 0;
 	unsigned int  assoclen = req->assoclen;
 	unsigned int  authsize = crypto_aead_authsize(tfm);
@@ -1870,7 +1940,10 @@ static struct sk_buff *create_authenc_wr(struct aead_request *req,
 	gfp_t flags = req->base.flags & CRYPTO_TFM_REQ_MAY_SLEEP ? GFP_KERNEL :
 		GFP_ATOMIC;
 
-	if (aeadctx->enckey_len == 0 || (req->cryptlen == 0))
+	reqctx->newdstsg = NULL;
+	dst_size = req->assoclen + req->cryptlen + (op_type ? -authsize :
+						   authsize);
+	if (aeadctx->enckey_len == 0 || (req->cryptlen <= 0))
 		goto err;
 
 	if (op_type && req->cryptlen < crypto_aead_authsize(tfm))
@@ -1879,15 +1952,25 @@ static struct sk_buff *create_authenc_wr(struct aead_request *req,
 	if (src_nent < 0)
 		goto err;
 	src = scatterwalk_ffwd(reqctx->srcffwd, req->src, req->assoclen);
-	reqctx->dst = src;
 
 	if (req->src != req->dst) {
 		error = crypto_blkcipher_encrypt(&desc, req->dst,
 						req->src, req->assoclen);
 		if (error)
 			return ERR_PTR(error);
-		reqctx->dst = scatterwalk_ffwd(reqctx->dstffwd, req->dst,
-					       req->assoclen);
+	}
+	if (dst_size && is_newsg(req->dst, &nents)) {
+		reqctx->newdstsg = alloc_new_sg(req->dst, nents);
+		if (IS_ERR(reqctx->newdstsg))
+			return ERR_CAST(reqctx->newdstsg);
+		reqctx->dst = scatterwalk_ffwd(reqctx->dstffwd,
+					       reqctx->newdstsg, req->assoclen);
+	} else {
+		if (req->src == req->dst)
+			reqctx->dst = src;
+		else
+			reqctx->dst = scatterwalk_ffwd(reqctx->dstffwd,
+						       req->dst, req->assoclen);
 	}
 	if (get_aead_subtype(tfm) == CRYPTO_ALG_SUB_TYPE_AEAD_NULL) {
 		null = 1;
@@ -1908,6 +1991,8 @@ static struct sk_buff *create_authenc_wr(struct aead_request *req,
 			T6_MAX_AAD_SIZE,
 			transhdr_len + (sgl_len(src_nent + MIN_AUTH_SG) * 8),
 				op_type)) {
+		free_new_sg(reqctx->newdstsg);
+		reqctx->newdstsg = NULL;
 		return ERR_PTR(chcr_aead_fallback(req, op_type));
 	}
 	skb = alloc_skb((transhdr_len + sizeof(struct sge_opaque_hdr)), flags);
@@ -1990,6 +2075,8 @@ dstmap_fail:
 	/* ivmap_fail: */
 	kfree_skb(skb);
 err:
+	free_new_sg(reqctx->newdstsg);
+	reqctx->newdstsg = NULL;
 	return ERR_PTR(error);
 }
 
@@ -2197,7 +2284,7 @@ static struct sk_buff *create_aead_ccm_wr(struct aead_request *req,
 	struct phys_sge_parm sg_param;
 	struct scatterlist *src;
 	unsigned int frags = 0, transhdr_len, ivsize = AES_BLOCK_SIZE;
-	unsigned int dst_size = 0, kctx_len;
+	unsigned int dst_size = 0, kctx_len, nents;
 	unsigned int sub_type;
 	unsigned int authsize = crypto_aead_authsize(tfm);
 	struct blkcipher_desc desc = {
@@ -2207,7 +2294,9 @@ static struct sk_buff *create_aead_ccm_wr(struct aead_request *req,
 	gfp_t flags = req->base.flags & CRYPTO_TFM_REQ_MAY_SLEEP ? GFP_KERNEL :
 		GFP_ATOMIC;
 
-
+	dst_size = req->assoclen + req->cryptlen + (op_type ? -authsize :
+						   authsize);
+	reqctx->newdstsg = NULL;
 	if (op_type && req->cryptlen < crypto_aead_authsize(tfm))
 		goto err;
 	src_nent = sg_nents_for_len(req->src, req->assoclen + req->cryptlen);
@@ -2216,8 +2305,6 @@ static struct sk_buff *create_aead_ccm_wr(struct aead_request *req,
 
 	sub_type = get_aead_subtype(tfm);
 	src = scatterwalk_ffwd(reqctx->srcffwd, req->src, req->assoclen);
-	reqctx->dst = src;
-
 	if (req->src != req->dst) {
 		error = crypto_blkcipher_encrypt(&desc, req->dst,
 						req->src, req->assoclen);
@@ -2225,8 +2312,19 @@ static struct sk_buff *create_aead_ccm_wr(struct aead_request *req,
 			pr_err("AAD copy to destination buffer fails\n");
 			return ERR_PTR(error);
 		}
-		reqctx->dst = scatterwalk_ffwd(reqctx->dstffwd, req->dst,
-					       req->assoclen);
+	}
+	if (dst_size && is_newsg(req->dst, &nents)) {
+		reqctx->newdstsg = alloc_new_sg(req->dst, nents);
+		if (IS_ERR(reqctx->newdstsg))
+			return ERR_CAST(reqctx->newdstsg);
+		reqctx->dst = scatterwalk_ffwd(reqctx->dstffwd,
+					       reqctx->newdstsg, req->assoclen);
+	} else {
+		if (req->src == req->dst)
+			reqctx->dst = src;
+		else
+			reqctx->dst = scatterwalk_ffwd(reqctx->dstffwd,
+						       req->dst, req->assoclen);
 	}
 	reqctx->dst_nents = sg_nents_for_len(reqctx->dst, req->cryptlen +
 					     (op_type ? -authsize : authsize));
@@ -2246,6 +2344,8 @@ static struct sk_buff *create_aead_ccm_wr(struct aead_request *req,
 			    T6_MAX_AAD_SIZE - 18,
 			    transhdr_len + (sgl_len(src_nent + MIN_CCM_SG) * 8),
 			    op_type)) {
+		free_new_sg(reqctx->newdstsg);
+		reqctx->newdstsg = NULL;
 		return ERR_PTR(chcr_aead_fallback(req, op_type));
 	}
 
@@ -2291,6 +2391,8 @@ static struct sk_buff *create_aead_ccm_wr(struct aead_request *req,
 dstmap_fail:
 	kfree_skb(skb);
 err:
+	free_new_sg(reqctx->newdstsg);
+	reqctx->newdstsg = NULL;
 	return ERR_PTR(error);
 }
 
@@ -2311,7 +2413,7 @@ static struct sk_buff *create_gcm_wr(struct aead_request *req,
 	struct scatterlist *src;
 	unsigned int frags = 0, transhdr_len;
 	unsigned int ivsize = AES_BLOCK_SIZE;
-	unsigned int dst_size = 0, kctx_len, assoclen = req->assoclen;
+	unsigned int dst_size = 0, kctx_len, nents, assoclen = req->assoclen;
 	unsigned char tag_offset = 0;
 	unsigned int authsize = crypto_aead_authsize(tfm);
 	struct blkcipher_desc desc = {
@@ -2321,6 +2423,9 @@ static struct sk_buff *create_gcm_wr(struct aead_request *req,
 	gfp_t flags = req->base.flags & CRYPTO_TFM_REQ_MAY_SLEEP ? GFP_KERNEL :
 		GFP_ATOMIC;
 
+	reqctx->newdstsg = NULL;
+	dst_size = assoclen + req->cryptlen + (op_type ? -authsize :
+						    authsize);
 	/* validate key size */
 	if (aeadctx->enckey_len == 0)
 		goto err;
@@ -2332,16 +2437,26 @@ static struct sk_buff *create_gcm_wr(struct aead_request *req,
 		goto err;
 
 	src = scatterwalk_ffwd(reqctx->srcffwd, req->src, assoclen);
-	reqctx->dst = src;
 	if (req->src != req->dst) {
 		error = crypto_blkcipher_encrypt(&desc, req->dst,
 						req->src, req->assoclen);
 		if (error)
 			return	ERR_PTR(error);
-		reqctx->dst = scatterwalk_ffwd(reqctx->dstffwd, req->dst,
-					       assoclen);
 	}
 
+	if (dst_size && is_newsg(req->dst, &nents)) {
+		reqctx->newdstsg = alloc_new_sg(req->dst, nents);
+		if (IS_ERR(reqctx->newdstsg))
+			return ERR_CAST(reqctx->newdstsg);
+		reqctx->dst = scatterwalk_ffwd(reqctx->dstffwd,
+					       reqctx->newdstsg, assoclen);
+	} else {
+		if (req->src == req->dst)
+			reqctx->dst = src;
+		else
+			reqctx->dst = scatterwalk_ffwd(reqctx->dstffwd,
+						       req->dst, assoclen);
+	}
 
 	reqctx->dst_nents = sg_nents_for_len(reqctx->dst, req->cryptlen +
 					     (op_type ? -authsize : authsize));
@@ -2360,6 +2475,8 @@ static struct sk_buff *create_gcm_wr(struct aead_request *req,
 			    T6_MAX_AAD_SIZE,
 			    transhdr_len + (sgl_len(src_nent + MIN_GCM_SG) * 8),
 			    op_type)) {
+		free_new_sg(reqctx->newdstsg);
+		reqctx->newdstsg = NULL;
 		return ERR_PTR(chcr_aead_fallback(req, op_type));
 	}
 	skb = alloc_skb((transhdr_len + sizeof(struct sge_opaque_hdr)), flags);
@@ -2437,6 +2554,8 @@ dstmap_fail:
 	/* ivmap_fail: */
 	kfree_skb(skb);
 err:
+	free_new_sg(reqctx->newdstsg);
+	reqctx->newdstsg = NULL;
 	return ERR_PTR(error);
 }
 
