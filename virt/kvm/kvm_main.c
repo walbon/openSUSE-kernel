@@ -569,8 +569,7 @@ static void kvm_destroy_vm(struct kvm *kvm)
 	raw_spin_unlock(&kvm_lock);
 	kvm_free_irq_routing(kvm);
 	for (i = 0; i < KVM_NR_BUSES; i++)
-		if (kvm->buses[i])
-			kvm_io_bus_destroy(kvm->buses[i]);
+		kvm_io_bus_destroy(kvm->buses[i]);
 	kvm_coalesced_mmio_free(kvm);
 #if defined(CONFIG_MMU_NOTIFIER) && defined(KVM_ARCH_WANT_MMU_NOTIFIER)
 	mmu_notifier_unregister(&kvm->mmu_notifier, kvm->mm);
@@ -2397,8 +2396,6 @@ int kvm_io_bus_write(struct kvm *kvm, enum kvm_bus bus_idx, gpa_t addr,
 	struct kvm_io_bus *bus;
 
 	bus = srcu_dereference(kvm->buses[bus_idx], &kvm->srcu);
-	if (!bus)
-		return -ENOMEM;
 	for (i = 0; i < bus->dev_count; i++)
 		if (!kvm_iodevice_write(bus->devs[i], addr, len, val))
 			return 0;
@@ -2413,8 +2410,6 @@ int kvm_io_bus_read(struct kvm *kvm, enum kvm_bus bus_idx, gpa_t addr,
 	struct kvm_io_bus *bus;
 
 	bus = srcu_dereference(kvm->buses[bus_idx], &kvm->srcu);
-	if (!bus)
-		return -ENOMEM;
 	for (i = 0; i < bus->dev_count; i++)
 		if (!kvm_iodevice_read(bus->devs[i], addr, len, val))
 			return 0;
@@ -2428,8 +2423,6 @@ int kvm_io_bus_register_dev(struct kvm *kvm, enum kvm_bus bus_idx,
 	struct kvm_io_bus *new_bus, *bus;
 
 	bus = kvm->buses[bus_idx];
-	if (!bus)
-		return -ENOMEM;
 	if (bus->dev_count > NR_IOBUS_DEVS-1)
 		return -ENOSPC;
 
@@ -2446,40 +2439,36 @@ int kvm_io_bus_register_dev(struct kvm *kvm, enum kvm_bus bus_idx,
 }
 
 /* Caller must hold slots_lock. */
-void kvm_io_bus_unregister_dev(struct kvm *kvm, enum kvm_bus bus_idx,
+int kvm_io_bus_unregister_dev(struct kvm *kvm, enum kvm_bus bus_idx,
 			      struct kvm_io_device *dev)
 {
-	int i;
+	int i, r;
 	struct kvm_io_bus *new_bus, *bus;
 
-	bus = kvm->buses[bus_idx];
-	if (!bus)
-		return;
-
 	new_bus = kzalloc(sizeof(struct kvm_io_bus), GFP_KERNEL);
-	if (!new_bus) {
-		pr_err("kvm: failed to shrink bus, removing it completely\n");
-		goto broken;
-	}
+	if (!new_bus)
+		return -ENOMEM;
 
+	bus = kvm->buses[bus_idx];
 	memcpy(new_bus, bus, sizeof(struct kvm_io_bus));
 
+	r = -ENOENT;
 	for (i = 0; i < new_bus->dev_count; i++)
 		if (new_bus->devs[i] == dev) {
+			r = 0;
 			new_bus->devs[i] = new_bus->devs[--new_bus->dev_count];
 			break;
 		}
 
-	if (i == new_bus->dev_count) {
+	if (r) {
 		kfree(new_bus);
-		return;
+		return r;
 	}
 
-broken:
 	rcu_assign_pointer(kvm->buses[bus_idx], new_bus);
 	synchronize_srcu_expedited(&kvm->srcu);
 	kfree(bus);
-	return;
+	return r;
 }
 
 static struct notifier_block kvm_cpu_notifier = {
