@@ -12512,7 +12512,8 @@ lpfc_sli4_els_wcqe_to_rspiocbq(struct lpfc_hba *phba,
 	cmdiocbq = lpfc_sli_iocbq_lookup_by_tag(phba, pring,
 				bf_get(lpfc_wcqe_c_request_tag, wcqe));
 	/* Put the iocb back on the txcmplq */
-	lpfc_sli_ringtxcmpl_put(phba, pring, cmdiocbq);
+	if (cmdiocbq)
+		lpfc_sli_ringtxcmpl_put(phba, pring, cmdiocbq);
 	spin_unlock_irqrestore(&pring->ring_lock, iflags);
 
 	if (unlikely(!cmdiocbq)) {
