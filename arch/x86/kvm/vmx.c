@@ -601,6 +601,7 @@ struct vcpu_vmx {
 
 	u64 current_tsc_ratio;
 
+	u32 guest_pkru;
 	u32 host_pkru;
 
 	/*
@@ -2222,6 +2223,16 @@ static void vmx_set_rflags(struct kvm_vcpu *vcpu, unsigned long rflags)
 		rflags |= X86_EFLAGS_IOPL | X86_EFLAGS_VM;
 	}
 	vmcs_writel(GUEST_RFLAGS, rflags);
+}
+
+static u32 vmx_get_pkru(struct kvm_vcpu *vcpu)
+{
+	return to_vmx(vcpu)->guest_pkru;
+}
+
+static void vmx_set_pkru(struct kvm_vcpu *vcpu, u32 pkru)
+{
+	to_vmx(vcpu)->guest_pkru = pkru;
 }
 
 static u32 vmx_get_interrupt_shadow(struct kvm_vcpu *vcpu)
@@ -8614,8 +8625,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
 	if (static_cpu_has(X86_FEATURE_PKU) &&
 	    kvm_read_cr4_bits(vcpu, X86_CR4_PKE) &&
-	    vcpu->arch.pkru != vmx->host_pkru)
-		__write_pkru(vcpu->arch.pkru);
+	    vmx->guest_pkru != vmx->host_pkru)
+		__write_pkru(vmx->guest_pkru);
 
 	atomic_switch_perf_msrs(vmx);
 	debugctlmsr = get_debugctlmsr();
@@ -8763,8 +8774,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	 */
 	if (static_cpu_has(X86_FEATURE_PKU) &&
 	    kvm_read_cr4_bits(vcpu, X86_CR4_PKE)) {
-		vcpu->arch.pkru = __read_pkru();
-		if (vcpu->arch.pkru != vmx->host_pkru)
+		vmx->guest_pkru = __read_pkru();
+		if (vmx->guest_pkru != vmx->host_pkru)
 			__write_pkru(vmx->host_pkru);
 	}
 
@@ -10903,6 +10914,8 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.get_rflags = vmx_get_rflags,
 	.set_rflags = vmx_set_rflags,
 
+	.get_pkru = vmx_get_pkru,
+
 	.fpu_activate = vmx_fpu_activate,
 	.fpu_deactivate = vmx_fpu_deactivate,
 
@@ -10985,10 +10998,15 @@ static struct kvm_x86_ops vmx_x86_ops = {
 
 static int __init vmx_init(void)
 {
-	int r = kvm_init(&vmx_x86_ops, sizeof(struct vcpu_vmx),
+	int r;
+
+	kvm_set_pkru = vmx_set_pkru;
+	r = kvm_init(&vmx_x86_ops, sizeof(struct vcpu_vmx),
                      __alignof__(struct vcpu_vmx), THIS_MODULE);
-	if (r)
+	if (r) {
+		kvm_set_pkru = NULL;
 		return r;
+	}
 
 #ifdef CONFIG_KEXEC_CORE
 	rcu_assign_pointer(crash_vmclear_loaded_vmcss,

@@ -426,7 +426,6 @@ struct kvm_vcpu_arch {
 	unsigned long cr4;
 	unsigned long cr4_guest_owned_bits;
 	unsigned long cr8;
-	u32 pkru;
 	u32 hflags;
 	u64 efer;
 	u64 apic_base;
@@ -981,6 +980,9 @@ struct kvm_arch_async_pf {
 };
 
 extern struct kvm_x86_ops *kvm_x86_ops;
+
+/* kABI hack */
+extern void (*kvm_set_pkru)(struct kvm_vcpu *vcpu, u32 pkru);
 
 int kvm_mmu_module_init(void);
 void kvm_mmu_module_exit(void);

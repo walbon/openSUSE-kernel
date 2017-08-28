@@ -1748,6 +1748,16 @@ static void svm_set_rflags(struct kvm_vcpu *vcpu, unsigned long rflags)
 	to_svm(vcpu)->vmcb->save.rflags = rflags;
 }
 
+static u32 svm_get_pkru(struct kvm_vcpu *vcpu)
+{
+       return 0;
+}
+
+static void svm_set_pkru(struct kvm_vcpu *vcpu, u32 pkru)
+{
+	/* Not supported */
+}
+
 static void svm_cache_reg(struct kvm_vcpu *vcpu, enum kvm_reg reg)
 {
 	switch (reg) {
@@ -5352,6 +5362,8 @@ static struct kvm_x86_ops svm_x86_ops = {
 	.get_rflags = svm_get_rflags,
 	.set_rflags = svm_set_rflags,
 
+	.get_pkru = svm_get_pkru,
+
 	.fpu_activate = svm_fpu_activate,
 	.fpu_deactivate = svm_fpu_deactivate,
 
@@ -5421,8 +5433,17 @@ static struct kvm_x86_ops svm_x86_ops = {
 
 static int __init svm_init(void)
 {
-	return kvm_init(&svm_x86_ops, sizeof(struct vcpu_svm),
-			__alignof__(struct vcpu_svm), THIS_MODULE);
+	int r;
+
+	kvm_set_pkru = svm_set_pkru;
+
+	r = kvm_init(&svm_x86_ops, sizeof(struct vcpu_svm),
+		     __alignof__(struct vcpu_svm), THIS_MODULE);
+
+	if (r)
+		kvm_set_pkru = NULL;
+
+	return r;
 }
 
 static void __exit svm_exit(void)

@@ -101,6 +101,10 @@ static void __kvm_set_rflags(struct kvm_vcpu *vcpu, unsigned long rflags);
 struct kvm_x86_ops *kvm_x86_ops __read_mostly;
 EXPORT_SYMBOL_GPL(kvm_x86_ops);
 
+/* kABI hack */
+void (*kvm_set_pkru)(struct kvm_vcpu *vcpu, u32 pkru);
+EXPORT_SYMBOL_GPL(kvm_set_pkru);
+
 static bool __read_mostly ignore_msrs = 0;
 module_param(ignore_msrs, bool, S_IRUGO | S_IWUSR);
 
@@ -3102,12 +3106,12 @@ static void fill_xsave(u8 *dest, struct kvm_vcpu *vcpu)
 			u32 size, offset, ecx, edx;
 			cpuid_count(XSTATE_CPUID, index,
 				    &size, &offset, &ecx, &edx);
-			if (feature == XFEATURE_MASK_PKRU)
-				memcpy(dest + offset, &vcpu->arch.pkru,
-				       sizeof(vcpu->arch.pkru));
-			else
+			if (feature == XFEATURE_MASK_PKRU) {
+				u32 pkru = kvm_read_pkru(vcpu);
+				memcpy(dest + offset, &pkru, sizeof(pkru));
+			} else {
 				memcpy(dest + offset, src, size);
-
+			}
 		}
 
 		valid -= feature;
@@ -3145,11 +3149,14 @@ static void load_xsave(struct kvm_vcpu *vcpu, u8 *src)
 			u32 size, offset, ecx, edx;
 			cpuid_count(XSTATE_CPUID, index,
 				    &size, &offset, &ecx, &edx);
-			if (feature == XFEATURE_MASK_PKRU)
-				memcpy(&vcpu->arch.pkru, src + offset,
-				       sizeof(vcpu->arch.pkru));
-			else
+			if (feature == XFEATURE_MASK_PKRU) {
+				u32 pkru;
+
+				memcpy(&pkru, src + offset, sizeof(pkru));
+				kvm_write_pkru(vcpu, pkru);
+			} else {
 				memcpy(dest, src + offset, size);
+			}
 		}
 
 		valid -= feature;
