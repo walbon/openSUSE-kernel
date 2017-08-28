@@ -19,7 +19,11 @@
 __asm__(".arch_extension	lse");
 
 /* Move the ll/sc atomics out-of-line */
+#ifdef __GENKSYMS__ /* workaround for SLE12-SP3 kABI compatibility */
+#define __LL_SC_INLINE
+#else
 #define __LL_SC_INLINE		notrace
+#endif
 #define __LL_SC_PREFIX(x)	__ll_sc_##x
 #define __LL_SC_EXPORT(x)	EXPORT_SYMBOL(__LL_SC_PREFIX(x))
 
