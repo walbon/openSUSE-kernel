@@ -667,10 +667,10 @@ static int tpm_tis_init(struct device *dev, struct tpm_info *tpm_info,
 		return -EIO;
 
 	/* Maximum timeouts */
-	chip->vendor.timeout_a = TIS_TIMEOUT_A_MAX;
-	chip->vendor.timeout_b = TIS_TIMEOUT_B_MAX;
-	chip->vendor.timeout_c = TIS_TIMEOUT_C_MAX;
-	chip->vendor.timeout_d = TIS_TIMEOUT_D_MAX;
+	chip->vendor.timeout_a = msecs_to_jiffies(TIS_TIMEOUT_A_MAX);
+	chip->vendor.timeout_b = msecs_to_jiffies(TIS_TIMEOUT_B_MAX);
+	chip->vendor.timeout_c = msecs_to_jiffies(TIS_TIMEOUT_C_MAX);
+	chip->vendor.timeout_d = msecs_to_jiffies(TIS_TIMEOUT_D_MAX);
 
 	if (wait_startup(chip, 0) != 0) {
 		rc = -ENODEV;
