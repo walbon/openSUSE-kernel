@@ -557,7 +557,7 @@ static inline int uuid_be_parse(const char *uuid, uuid_be *u)
 	unsigned int i;
 
 	for (i = 0; i < 36; i++) {
-		if (i == 8 || i == 13 || i == 23) {
+		if (i == 8 || i == 13 || i == 18 || i == 23) {
 			if (uuid[i] != '-')
 				return -EINVAL;
 		} else if (!isxdigit(uuid[i])) {
