@@ -1151,7 +1151,7 @@ xfs_vm_fault(
 	struct vm_area_struct	*vma,
 	struct vm_fault	*vmf)
 {
-	struct inode	*inode = vma->vm_file->f_path.dentry->d_inode;
+	struct inode	*inode = file_inode(vma->vm_file);
 	struct xfs_mount *mp = XFS_M(inode->i_sb);
 
 	ASSERT_ALWAYS(mp->m_flags & XFS_MOUNT_DMAPI);
@@ -1726,7 +1726,7 @@ xfs_file_mmap(
 	vma->vm_ops = &xfs_file_vm_ops;
 
 #ifdef HAVE_DMAPI
-	if (XFS_M(filp->f_path.dentry->d_inode->i_sb)->m_flags & XFS_MOUNT_DMAPI)
+	if (XFS_M(file_inode(filp)->i_sb)->m_flags & XFS_MOUNT_DMAPI)
 		vma->vm_ops = &xfs_dmapi_file_vm_ops;
 #endif /* HAVE_DMAPI */
 
