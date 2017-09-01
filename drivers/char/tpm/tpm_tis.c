@@ -245,16 +245,18 @@ static int get_burstcount(struct tpm_chip *chip)
 {
 	unsigned long stop;
 	int burstcnt;
+	u32 value;
 
 	/* wait for burstcount */
-	/* which timeout value, spec has 2 answers (c & d) */
-	stop = jiffies + chip->vendor.timeout_d;
+	if (chip->flags & TPM_CHIP_FLAG_TPM2)
+		stop = jiffies + chip->vendor.timeout_a;
+	else
+		stop = jiffies + chip->vendor.timeout_d;
 	do {
-		burstcnt = ioread8(chip->vendor.iobase +
-				   TPM_STS(chip->vendor.locality) + 1);
-		burstcnt += ioread8(chip->vendor.iobase +
-				    TPM_STS(chip->vendor.locality) +
-				    2) << 8;
+		value = ioread32(chip->vendor.iobase +
+				 TPM_STS(chip->vendor.locality));
+
+		burstcnt = (value >> 8) & 0xFFFF;
 		if (burstcnt)
 			return burstcnt;
 		msleep(TPM_TIMEOUT);
@@ -667,10 +669,10 @@ static int tpm_tis_init(struct device *dev, struct tpm_info *tpm_info,
 		return -EIO;
 
 	/* Maximum timeouts */
-	chip->vendor.timeout_a = TIS_TIMEOUT_A_MAX;
-	chip->vendor.timeout_b = TIS_TIMEOUT_B_MAX;
-	chip->vendor.timeout_c = TIS_TIMEOUT_C_MAX;
-	chip->vendor.timeout_d = TIS_TIMEOUT_D_MAX;
+	chip->vendor.timeout_a = msecs_to_jiffies(TIS_TIMEOUT_A_MAX);
+	chip->vendor.timeout_b = msecs_to_jiffies(TIS_TIMEOUT_B_MAX);
+	chip->vendor.timeout_c = msecs_to_jiffies(TIS_TIMEOUT_C_MAX);
+	chip->vendor.timeout_d = msecs_to_jiffies(TIS_TIMEOUT_D_MAX);
 
 	if (wait_startup(chip, 0) != 0) {
 		rc = -ENODEV;
