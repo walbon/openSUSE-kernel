@@ -499,7 +499,7 @@ read_kcore(struct file *file, char __user *buffer, size_t buflen, loff_t *fpos)
 		if (&m->list == &kclist_head) {
 			if (clear_user(buffer, tsz))
 				return -EFAULT;
-		} else if (is_vmalloc_or_module_addr((void *)start)) {
+		} else if (m->type == KCORE_VMALLOC) {
 			char * elf_buf;
 
 			elf_buf = kzalloc(tsz, GFP_KERNEL);
