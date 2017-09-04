@@ -775,11 +775,10 @@ static int thunderx_lmc_probe(struct pci_dev *pdev,
 
 	lmc->xor_bank = lmc_control & LMC_CONTROL_XOR_BANK;
 
-	l2c_ioaddr = ioremap(L2C_CTL | FIELD_PREP(THUNDERX_NODE, lmc->node),
-			     PAGE_SIZE);
-
+	l2c_ioaddr = ioremap(L2C_CTL | FIELD_PREP(THUNDERX_NODE, lmc->node), PAGE_SIZE);
 	if (!l2c_ioaddr) {
 		dev_err(&pdev->dev, "Cannot map L2C_CTL\n");
+		ret = -ENOMEM;
 		goto err_free;
 	}
 
@@ -2080,7 +2079,7 @@ static int thunderx_l2c_probe(struct pci_dev *pdev,
 	if (IS_ENABLED(CONFIG_EDAC_DEBUG)) {
 		l2c->debugfs = edac_debugfs_create_dir(pdev->dev.kobj.name);
 
-		thunderx_create_debugfs_nodes(l2c->debugfs, l2c_devattr,
+		ret = thunderx_create_debugfs_nodes(l2c->debugfs, l2c_devattr,
 					      l2c, dfs_entries);
 
 		if (ret != dfs_entries) {
