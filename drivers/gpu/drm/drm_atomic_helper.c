@@ -1471,6 +1471,8 @@ void drm_atomic_helper_swap_state(struct drm_device *dev,
 				  struct drm_atomic_state *state)
 {
 	int i;
+	void *obj, *obj_state;
+	const struct drm_private_state_funcs *funcs;
 
 	for (i = 0; i < state->num_connector; i++) {
 		struct drm_connector *connector = state->connectors[i];
@@ -1504,6 +1506,9 @@ void drm_atomic_helper_swap_state(struct drm_device *dev,
 		swap(state->plane_states[i], plane->state);
 		plane->state->state = NULL;
 	}
+
+	__for_each_private_obj(state, obj, obj_state, i, funcs)
+		funcs->swap_state(obj, &state->private_objs[i].obj_state);
 }
 EXPORT_SYMBOL(drm_atomic_helper_swap_state);
 

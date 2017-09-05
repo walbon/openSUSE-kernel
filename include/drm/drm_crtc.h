@@ -925,6 +925,53 @@ struct drm_bridge {
 };
 
 /**
+ * struct drm_private_state_funcs - atomic state functions for private objects
+ *
+ * These hooks are used by atomic helpers to create, swap and destroy states o
+ * private objects. The structure itself is used as a vtable to identify the
+ * associated private object type. Each private object type that needs to be
+ * added to the atomic states is expected to have an implementation of these
+ * hooks and pass a pointer to it's drm_private_state_funcs struct to
+ * drm_atomic_get_private_obj_state().
+ */
+struct drm_private_state_funcs {
+	/**
+	 * @duplicate_state:
+	 *
+	 * Duplicate the current state of the private object and return it. It
+	 * is an error to call this before obj->state has been initialized.
+	 *
+	 * RETURNS:
+	 *
+	 * Duplicated atomic state or NULL when obj->state is not
+	 * initialized or allocation failed.
+	 */
+	void *(*duplicate_state)(struct drm_atomic_state *state, void *obj);
+
+	/**
+	 * @swap_state:
+	 *
+	 * This function swaps the existing state of a private object @obj with
+	 * it's newly created state, the pointer to which is passed as
+	 * @obj_state_ptr.
+	 */
+	void (*swap_state)(void *obj, void **obj_state_ptr);
+
+	/**
+	 * @destroy_state:
+	 *
+	 * Frees the private object state created with @duplicate_state.
+	 */
+	void (*destroy_state)(void *obj_state);
+};
+
+struct __drm_private_objs_state {
+	void *obj;
+	void *obj_state;
+	const struct drm_private_state_funcs *funcs;
+};
+
+/**
  * struct drm_atomic_state - the global state object for atomic updates
  * @dev: parent DRM device
  * @allow_modeset: allow full modeset
@@ -936,6 +983,8 @@ struct drm_bridge {
  * @num_connector: size of the @connectors and @connector_states arrays
  * @connectors: pointer to array of connector pointers
  * @connector_states: pointer to array of connector states pointers
+ * @num_private_objs: size of the @private_objs array
+ * @private_objs: pointer to array of private object pointers
  * @acquire_ctx: acquire context for this atomic modeset state update
  */
 struct drm_atomic_state {
@@ -949,6 +998,8 @@ struct drm_atomic_state {
 	int num_connector;
 	struct drm_connector **connectors;
 	struct drm_connector_state **connector_states;
+	int num_private_objs;
+	struct __drm_private_objs_state *private_objs;
 
 	struct drm_modeset_acquire_ctx *acquire_ctx;
 };
