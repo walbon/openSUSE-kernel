@@ -971,6 +971,13 @@ struct __drm_private_objs_state {
 	const struct drm_private_state_funcs *funcs;
 };
 
+struct drm_atomic_state_private_objs {
+	int num_private_objs;
+	struct __drm_private_objs_state *private_objs;
+	struct drm_atomic_state *state;
+	struct list_head list;
+};
+
 /**
  * struct drm_atomic_state - the global state object for atomic updates
  * @dev: parent DRM device
@@ -998,8 +1005,6 @@ struct drm_atomic_state {
 	int num_connector;
 	struct drm_connector **connectors;
 	struct drm_connector_state **connector_states;
-	int num_private_objs;
-	struct __drm_private_objs_state *private_objs;
 
 	struct drm_modeset_acquire_ctx *acquire_ctx;
 };
