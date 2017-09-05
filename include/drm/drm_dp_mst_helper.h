@@ -24,6 +24,7 @@
 
 #include <linux/types.h>
 #include <drm/drm_dp_helper.h>
+#include <drm/drm_atomic.h>
 
 struct drm_dp_mst_branch;
 
@@ -394,6 +395,12 @@ struct drm_dp_payload {
 	int vcpi;
 };
 
+struct drm_dp_mst_topology_state {
+	int avail_slots;
+	struct drm_atomic_state *state;
+	struct drm_dp_mst_topology_mgr *mgr;
+};
+
 /**
  * struct drm_dp_mst_topology_mgr - DisplayPort MST manager
  * @dev: device pointer for adding i2c devices etc.
@@ -439,6 +446,16 @@ struct drm_dp_mst_topology_mgr {
 	int total_slots;
 	int avail_slots;
 	int total_pbn;
+
+	/**
+	 * @state: State information for topology manager
+	 */
+	struct drm_dp_mst_topology_state *state;
+
+	/**
+	 * @funcs: Atomic helper callbacks
+	 */
+	const struct drm_private_state_funcs *funcs;
 
 	/* messages to be transmitted */
 	/* qlock protects the upq/downq and in_progress,
@@ -511,4 +528,7 @@ void drm_dp_mst_dump_topology(struct seq_file *m,
 
 void drm_dp_mst_topology_mgr_suspend(struct drm_dp_mst_topology_mgr *mgr);
 int drm_dp_mst_topology_mgr_resume(struct drm_dp_mst_topology_mgr *mgr);
+struct drm_dp_mst_topology_state *drm_atomic_get_mst_topology_state(struct drm_atomic_state *state,
+								    struct drm_dp_mst_topology_mgr *mgr);
+
 #endif
