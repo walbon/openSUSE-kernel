@@ -24,7 +24,9 @@
 
 #include <linux/types.h>
 #include <drm/drm_dp_helper.h>
+#ifndef __GENKSYMS__
 #include <drm/drm_atomic.h>
+#endif
 
 struct drm_dp_mst_branch;
 
@@ -401,6 +403,13 @@ struct drm_dp_mst_topology_state {
 	struct drm_dp_mst_topology_mgr *mgr;
 };
 
+struct drm_dp_mst_topology_mgr_priv_state {
+	struct drm_dp_mst_topology_state *state;
+	const struct drm_private_state_funcs *funcs;
+	struct drm_dp_mst_topology_mgr *mgr;
+	struct list_head list;
+};
+
 /**
  * struct drm_dp_mst_topology_mgr - DisplayPort MST manager
  * @dev: device pointer for adding i2c devices etc.
@@ -446,16 +455,6 @@ struct drm_dp_mst_topology_mgr {
 	int total_slots;
 	int avail_slots;
 	int total_pbn;
-
-	/**
-	 * @state: State information for topology manager
-	 */
-	struct drm_dp_mst_topology_state *state;
-
-	/**
-	 * @funcs: Atomic helper callbacks
-	 */
-	const struct drm_private_state_funcs *funcs;
 
 	/* messages to be transmitted */
 	/* qlock protects the upq/downq and in_progress,
