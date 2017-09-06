@@ -5940,6 +5940,31 @@ static void bnxt_sp_task(struct work_struct *work)
 	clear_bit(BNXT_STATE_IN_SP_TASK, &bp->state);
 }
 
+static void bnxt_unmap_bars(struct bnxt *bp, struct pci_dev *pdev)
+{
+	if (bp->bar2) {
+		pci_iounmap(pdev, bp->bar2);
+		bp->bar2 = NULL;
+	}
+
+	if (bp->bar1) {
+		pci_iounmap(pdev, bp->bar1);
+		bp->bar1 = NULL;
+	}
+
+	if (bp->bar0) {
+		pci_iounmap(pdev, bp->bar0);
+		bp->bar0 = NULL;
+	}
+}
+
+static void bnxt_cleanup_pci(struct bnxt *bp)
+{
+	bnxt_unmap_bars(bp, bp->pdev);
+	pci_release_regions(bp->pdev);
+	pci_disable_device(bp->pdev);
+}
+
 static int bnxt_init_board(struct pci_dev *pdev, struct net_device *dev)
 {
 	int rc;
@@ -6025,25 +6050,10 @@ static int bnxt_init_board(struct pci_dev *pdev, struct net_device *dev)
 	bp->current_interval = BNXT_TIMER_INTERVAL;
 
 	clear_bit(BNXT_STATE_OPEN, &bp->state);
-
 	return 0;
 
 init_err_release:
-	if (bp->bar2) {
-		pci_iounmap(pdev, bp->bar2);
-		bp->bar2 = NULL;
-	}
-
-	if (bp->bar1) {
-		pci_iounmap(pdev, bp->bar1);
-		bp->bar1 = NULL;
-	}
-
-	if (bp->bar0) {
-		pci_iounmap(pdev, bp->bar0);
-		bp->bar0 = NULL;
-	}
-
+	bnxt_unmap_bars(bp, pdev);
 	pci_release_regions(pdev);
 
 init_err_disable:
@@ -6387,13 +6397,8 @@ static void bnxt_remove_one(struct pci_dev *pdev)
 
 	bnxt_hwrm_func_drv_unrgtr(bp);
 	bnxt_free_hwrm_resources(bp);
-	pci_iounmap(pdev, bp->bar2);
-	pci_iounmap(pdev, bp->bar1);
-	pci_iounmap(pdev, bp->bar0);
+	bnxt_cleanup_pci(bp);
 	free_netdev(dev);
-
-	pci_release_regions(pdev);
-	pci_disable_device(pdev);
 }
 
 static int bnxt_probe_phy(struct bnxt *bp)
@@ -6561,7 +6566,6 @@ static int bnxt_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	dev->netdev_ops = &bnxt_netdev_ops;
 	dev->watchdog_timeo = BNXT_TX_TIMEOUT;
 	dev->ethtool_ops = &bnxt_ethtool_ops;
-
 	pci_set_drvdata(pdev, dev);
 
 	dev->hw_features = NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_SG |
@@ -6587,12 +6591,12 @@ static int bnxt_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 #endif
 	rc = bnxt_alloc_hwrm_resources(bp);
 	if (rc)
-		goto init_err;
+		goto init_err_pci_clean;
 
 	mutex_init(&bp->hwrm_cmd_lock);
 	rc = bnxt_hwrm_ver_get(bp);
 	if (rc)
-		goto init_err;
+		goto init_err_pci_clean;
 
 	bp->gro_func = bnxt_gro_func_5730x;
 	if (BNXT_CHIP_NUM_57X1X(bp->chip_num))
@@ -6600,7 +6604,7 @@ static int bnxt_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	rc = bnxt_hwrm_func_drv_rgtr(bp);
 	if (rc)
-		goto init_err;
+		goto init_err_pci_clean;
 
 	/* Get the MAX capabilities for this function */
 	rc = bnxt_hwrm_func_qcaps(bp);
@@ -6608,7 +6612,7 @@ static int bnxt_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		netdev_err(bp->dev, "hwrm query capability failure rc: %x\n",
 			   rc);
 		rc = -1;
-		goto init_err;
+		goto init_err_pci_clean;
 	}
 
 	rc = bnxt_hwrm_queue_qportcfg(bp);
@@ -6616,7 +6620,7 @@ static int bnxt_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		netdev_err(bp->dev, "hwrm query qportcfg failure rc: %x\n",
 			   rc);
 		rc = -1;
-		goto init_err;
+		goto init_err_pci_clean;
 	}
 
 	bnxt_hwrm_func_qcfg(bp);
@@ -6644,11 +6648,11 @@ static int bnxt_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	rc = bnxt_probe_phy(bp);
 	if (rc)
-		goto init_err;
+		goto init_err_pci_clean;
 
 	rc = register_netdev(dev);
 	if (rc)
-		goto init_err;
+		goto init_err_pci_clean;
 
 	netdev_info(dev, "%s found at mem %lx, node addr %pM\n",
 		    board_info[ent->driver_data].name,
@@ -6658,10 +6662,8 @@ static int bnxt_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	return 0;
 
-init_err:
-	pci_iounmap(pdev, bp->bar0);
-	pci_release_regions(pdev);
-	pci_disable_device(pdev);
+init_err_pci_clean:
+	bnxt_cleanup_pci(bp);
 
 init_err_free:
 	free_netdev(dev);
