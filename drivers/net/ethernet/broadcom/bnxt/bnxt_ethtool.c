@@ -630,7 +630,7 @@ u32 _bnxt_fw_to_ethtool_adv_spds(u16 fw_speeds, u8 fw_pause)
 
 static u32 bnxt_fw_to_ethtool_advertised_spds(struct bnxt_link_info *link_info)
 {
-	u16 fw_speeds = link_info->auto_link_speeds;
+	u16 fw_speeds = link_info->advertising;
 	u8 fw_pause = 0;
 
 	if (link_info->autoneg & BNXT_AUTONEG_FLOW_CTRL)
@@ -831,8 +831,9 @@ static int bnxt_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 	int rc = 0;
 	struct bnxt *bp = netdev_priv(dev);
 	struct bnxt_link_info *link_info = &bp->link_info;
-	u32 speed, fw_advertising = 0;
 	bool set_pause = false;
+	u16 fw_advertising = 0;
+	u32 speed;
 
 	if (!BNXT_SINGLE_PF(bp))
 		return rc;
