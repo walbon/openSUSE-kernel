@@ -26,10 +26,17 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 
+#include <asm/cputype.h>
+
 #define IORT_TYPE_MASK(type)	(1 << (type))
 #define IORT_MSI_TYPE		(1 << ACPI_IORT_NODE_ITS_GROUP)
 #define IORT_IOMMU_TYPE		((1 << ACPI_IORT_NODE_SMMU) |	\
 				(1 << ACPI_IORT_NODE_SMMU_V3))
+
+/* Until ACPICA headers cover IORT rev. C */
+#ifndef ACPI_IORT_SMMU_V3_CAVIUM_CN99XX
+#define ACPI_IORT_SMMU_V3_CAVIUM_CN99XX		0x2
+#endif
 
 struct iort_its_msi_chip {
 	struct list_head	list;
@@ -760,53 +767,88 @@ static int __init arm_smmu_v3_count_resources(struct acpi_iort_node *node)
 	return num_res;
 }
 
+static bool is_cavium_cn99xx_smmu_v3(void)
+{
+	u32 cpu_model = read_cpuid_id() & MIDR_CPU_MODEL_MASK;
+
+	return cpu_model == MIDR_CPU_MODEL(ARM_CPU_IMP_BRCM,
+					   BRCM_CPU_PART_VULCAN);
+}
+
+static bool arm_smmu_v3_is_combined_irq(struct acpi_iort_smmu_v3 *smmu)
+{
+	/*
+	 * Cavium ThunderX2 implementation doesn't not support unique
+	 * irq line. Use single irq line for all the SMMUv3 interrupts.
+	 */
+	if (smmu->model != ACPI_IORT_SMMU_V3_CAVIUM_CN99XX
+	    && !is_cavium_cn99xx_smmu_v3())
+		return false;
+
+	/*
+	 * ThunderX2 doesn't support MSIs from the SMMU, so we're checking
+	 * SPI numbers here.
+	 */
+	return smmu->event_gsiv == smmu->pri_gsiv &&
+	       smmu->event_gsiv == smmu->gerr_gsiv &&
+	       smmu->event_gsiv == smmu->sync_gsiv;
+}
+
+static unsigned long arm_smmu_v3_resource_size(struct acpi_iort_smmu_v3 *smmu)
+{
+	/*
+	 * Override the size, for Cavium ThunderX2 implementation
+	 * which doesn't support the page 1 SMMU register space.
+	 */
+	if (smmu->model == ACPI_IORT_SMMU_V3_CAVIUM_CN99XX
+	    || is_cavium_cn99xx_smmu_v3())
+		return SZ_64K;
+
+	return SZ_128K;
+}
+
 static void __init arm_smmu_v3_init_resources(struct resource *res,
 					      struct acpi_iort_node *node)
 {
 	struct acpi_iort_smmu_v3 *smmu;
 	int num_res = 0;
-	unsigned long size = SZ_128K;
-	u32 cpu_model;
 
 	/* Retrieve SMMUv3 specific data */
 	smmu = (struct acpi_iort_smmu_v3 *)node->node_data;
 
-	/*
-	 * Override the size, for Cavium ThunderX2 implementation
-	 * which doesn't support the page 1 SMMU register space.
-	 * For CN99xx A1 silicon override the size based on MIDR as
-	 * model is not correctly set in IORT
-	 */
-	cpu_model = read_cpuid_id() & MIDR_CPU_MODEL_MASK;
-	if (smmu->model == ACPI_IORT_SMMU_CAVIUM_CN99XX ||
-			cpu_model == 0x420f5160)
-		size = SZ_64K;
-
 	res[num_res].start = smmu->base_address;
-	res[num_res].end = smmu->base_address + size - 1;
+	res[num_res].end = smmu->base_address +
+				arm_smmu_v3_resource_size(smmu) - 1;
 	res[num_res].flags = IORESOURCE_MEM;
 
 	num_res++;
+	if (arm_smmu_v3_is_combined_irq(smmu)) {
+		if (smmu->event_gsiv)
+			acpi_iort_register_irq(smmu->event_gsiv, "combined",
+					       ACPI_EDGE_SENSITIVE,
+					       &res[num_res++]);
+	} else {
 
-	if (smmu->event_gsiv)
-		acpi_iort_register_irq(smmu->event_gsiv, "eventq",
-				       ACPI_EDGE_SENSITIVE,
-				       &res[num_res++]);
+		if (smmu->event_gsiv)
+			acpi_iort_register_irq(smmu->event_gsiv, "eventq",
+					       ACPI_EDGE_SENSITIVE,
+					       &res[num_res++]);
 
-	if (smmu->pri_gsiv)
-		acpi_iort_register_irq(smmu->pri_gsiv, "priq",
-				       ACPI_EDGE_SENSITIVE,
-				       &res[num_res++]);
+		if (smmu->pri_gsiv)
+			acpi_iort_register_irq(smmu->pri_gsiv, "priq",
+					       ACPI_EDGE_SENSITIVE,
+					       &res[num_res++]);
 
-	if (smmu->gerr_gsiv)
-		acpi_iort_register_irq(smmu->gerr_gsiv, "gerror",
-				       ACPI_EDGE_SENSITIVE,
-				       &res[num_res++]);
+		if (smmu->gerr_gsiv)
+			acpi_iort_register_irq(smmu->gerr_gsiv, "gerror",
+					       ACPI_EDGE_SENSITIVE,
+					       &res[num_res++]);
 
-	if (smmu->sync_gsiv)
-		acpi_iort_register_irq(smmu->sync_gsiv, "cmdq-sync",
-				       ACPI_EDGE_SENSITIVE,
-				       &res[num_res++]);
+		if (smmu->sync_gsiv)
+			acpi_iort_register_irq(smmu->sync_gsiv, "cmdq-sync",
+					       ACPI_EDGE_SENSITIVE,
+					       &res[num_res++]);
+	}
 }
 
 static bool __init arm_smmu_v3_is_coherent(struct acpi_iort_node *node)

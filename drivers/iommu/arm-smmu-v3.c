@@ -418,8 +418,10 @@
 #define MSI_IOVA_BASE			0x8000000
 #define MSI_IOVA_LENGTH			0x100000
 
-#define ARM_SMMU_PAGE0_REGS_ONLY(smmu)		\
-	((smmu)->options & ARM_SMMU_OPT_PAGE0_REGS_ONLY)
+/* Until ACPICA headers cover IORT rev. C */
+#ifndef ACPI_IORT_SMMU_V3_CAVIUM_CN99XX
+#define ACPI_IORT_SMMU_V3_CAVIUM_CN99XX		0x2
+#endif
 
 static bool disable_bypass;
 module_param_named(disable_bypass, disable_bypass, bool, S_IRUGO);
@@ -606,7 +608,7 @@ struct arm_smmu_device {
 	u32				features;
 
 #define ARM_SMMU_OPT_SKIP_PREFETCH	(1 << 0)
-#define ARM_SMMU_OPT_PAGE0_REGS_ONLY    (1 << 1)
+#define ARM_SMMU_OPT_PAGE0_REGS_ONLY	(1 << 1)
 	u32				options;
 
 	struct arm_smmu_cmdq		cmdq;
@@ -614,6 +616,7 @@ struct arm_smmu_device {
 	struct arm_smmu_priq		priq;
 
 	int				gerr_irq;
+	int				combined_irq;
 
 	unsigned long			ias; /* IPA */
 	unsigned long			oas; /* PA */
@@ -669,14 +672,15 @@ struct arm_smmu_option_prop {
 
 static struct arm_smmu_option_prop arm_smmu_options[] = {
 	{ ARM_SMMU_OPT_SKIP_PREFETCH, "hisilicon,broken-prefetch-cmd" },
-	{ ARM_SMMU_OPT_PAGE0_REGS_ONLY, "cavium-cn99xx,broken-page1-regspace"},
+	{ ARM_SMMU_OPT_PAGE0_REGS_ONLY, "cavium,cn9900-broken-page1-regspace"},
 	{ 0, NULL},
 };
 
 static inline void __iomem *arm_smmu_page1_fixup(unsigned long offset,
 						 struct arm_smmu_device *smmu)
 {
-	if (offset > SZ_64K && ARM_SMMU_PAGE0_REGS_ONLY(smmu))
+	if ((offset > SZ_64K) &&
+	    (smmu->options & ARM_SMMU_OPT_PAGE0_REGS_ONLY))
 		offset -= SZ_64K;
 
 	return smmu->base + offset;
@@ -1325,6 +1329,24 @@ static irqreturn_t arm_smmu_gerror_handler(int irq, void *dev)
 
 	writel(gerror, smmu->base + ARM_SMMU_GERRORN);
 	return IRQ_HANDLED;
+}
+
+static irqreturn_t arm_smmu_combined_irq_thread(int irq, void *dev)
+{
+	struct arm_smmu_device *smmu = dev;
+
+	arm_smmu_evtq_thread(irq, dev);
+	if (smmu->features & ARM_SMMU_FEAT_PRI)
+		arm_smmu_priq_thread(irq, dev);
+
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t arm_smmu_combined_irq_handler(int irq, void *dev)
+{
+	arm_smmu_gerror_handler(irq, dev);
+	arm_smmu_cmdq_sync_handler(irq, dev);
+	return IRQ_WAKE_THREAD;
 }
 
 /* IO_PGTABLE API */
@@ -2238,23 +2260,53 @@ static void arm_smmu_setup_msis(struct arm_smmu_device *smmu)
 	devm_add_action(dev, arm_smmu_free_msis, dev);
 }
 
-static int get_irq_flags(struct arm_smmu_device *smmu, int irq)
+static void arm_smmu_setup_unique_irqs(struct arm_smmu_device *smmu)
 {
-	int match_count = 0;
+	int irq, ret;
 
-	if (irq == smmu->evtq.q.irq)
-		match_count++;
-	if (irq == smmu->cmdq.q.irq)
-		match_count++;
-	if (irq == smmu->gerr_irq)
-		match_count++;
-	if (irq == smmu->priq.q.irq)
-		match_count++;
+	arm_smmu_setup_msis(smmu);
 
-	if (match_count > 1)
-		return IRQF_SHARED | IRQF_ONESHOT;
+	/* Request interrupt lines */
+	irq = smmu->evtq.q.irq;
+	if (irq) {
+		ret = devm_request_threaded_irq(smmu->dev, irq, NULL,
+						arm_smmu_evtq_thread,
+						IRQF_ONESHOT,
+						"arm-smmu-v3-evtq", smmu);
+		if (IS_ERR_VALUE(ret))
+			dev_warn(smmu->dev, "failed to enable evtq irq\n");
+	}
 
-	return IRQF_ONESHOT;
+	irq = smmu->cmdq.q.irq;
+	if (irq) {
+		ret = devm_request_irq(smmu->dev, irq,
+				       arm_smmu_cmdq_sync_handler, 0,
+				       "arm-smmu-v3-cmdq-sync", smmu);
+		if (IS_ERR_VALUE(ret))
+			dev_warn(smmu->dev, "failed to enable cmdq-sync irq\n");
+	}
+
+	irq = smmu->gerr_irq;
+	if (irq) {
+		ret = devm_request_irq(smmu->dev, irq, arm_smmu_gerror_handler,
+				       0, "arm-smmu-v3-gerror", smmu);
+		if (IS_ERR_VALUE(ret))
+			dev_warn(smmu->dev, "failed to enable gerror irq\n");
+	}
+
+	if (smmu->features & ARM_SMMU_FEAT_PRI) {
+		irq = smmu->priq.q.irq;
+		if (irq) {
+			ret = devm_request_threaded_irq(smmu->dev, irq, NULL,
+							arm_smmu_priq_thread,
+							IRQF_ONESHOT,
+							"arm-smmu-v3-priq",
+							smmu);
+			if (IS_ERR_VALUE(ret))
+				dev_warn(smmu->dev,
+					 "failed to enable priq irq\n");
+		}
+	}
 }
 
 static int arm_smmu_setup_irqs(struct arm_smmu_device *smmu)
@@ -2270,53 +2322,24 @@ static int arm_smmu_setup_irqs(struct arm_smmu_device *smmu)
 		return ret;
 	}
 
-	arm_smmu_setup_msis(smmu);
-
-	/* Request interrupt lines */
-	irq = smmu->evtq.q.irq;
+	irq = smmu->combined_irq;
 	if (irq) {
-		ret = devm_request_threaded_irq(smmu->dev, irq, NULL,
-						arm_smmu_evtq_thread,
-						get_irq_flags(smmu, irq),
-						"arm-smmu-v3-evtq", smmu);
-		if (IS_ERR_VALUE(ret))
-			dev_warn(smmu->dev, "failed to enable evtq irq\n");
-	}
+		/*
+		 * Cavium ThunderX2 implementation doesn't not support unique
+		 * irq lines. Use single irq line for all the SMMUv3 interrupts.
+		 */
+		ret = devm_request_threaded_irq(smmu->dev, irq,
+					arm_smmu_combined_irq_handler,
+					arm_smmu_combined_irq_thread,
+					IRQF_ONESHOT,
+					"arm-smmu-v3-combined-irq", smmu);
+		if (ret < 0)
+			dev_warn(smmu->dev, "failed to enable combined irq\n");
+	} else
+		arm_smmu_setup_unique_irqs(smmu);
 
-	irq = smmu->cmdq.q.irq;
-	if (irq) {
-		ret = devm_request_irq(smmu->dev, irq,
-				       arm_smmu_cmdq_sync_handler,
-					   get_irq_flags(smmu, irq),
-				       "arm-smmu-v3-cmdq-sync", smmu);
-		if (IS_ERR_VALUE(ret))
-			dev_warn(smmu->dev, "failed to enable cmdq-sync irq\n");
-	}
-
-	irq = smmu->gerr_irq;
-	if (irq) {
-		ret = devm_request_irq(smmu->dev, irq, arm_smmu_gerror_handler,
-						get_irq_flags(smmu, irq),
-						"arm-smmu-v3-gerror", smmu);
-		if (IS_ERR_VALUE(ret))
-			dev_warn(smmu->dev, "failed to enable gerror irq\n");
-	}
-
-	if (smmu->features & ARM_SMMU_FEAT_PRI) {
-		irq = smmu->priq.q.irq;
-		if (irq) {
-			ret = devm_request_threaded_irq(smmu->dev, irq, NULL,
-							arm_smmu_priq_thread,
-							get_irq_flags(smmu, irq),
-							"arm-smmu-v3-priq",
-							smmu);
-			if (IS_ERR_VALUE(ret))
-				dev_warn(smmu->dev,
-					 "failed to enable priq irq\n");
-			else
-				irqen_flags |= IRQ_CTRL_PRIQ_IRQEN;
-		}
-	}
+	if (smmu->features & ARM_SMMU_FEAT_PRI)
+		irqen_flags |= IRQ_CTRL_PRIQ_IRQEN;
 
 	/* Enable interrupt generation on the SMMU */
 	ret = arm_smmu_write_reg_sync(smmu, irqen_flags,
@@ -2646,6 +2669,7 @@ static int arm_smmu_device_hw_probe(struct arm_smmu_device *smmu)
 }
 
 #ifdef CONFIG_ACPI
+
 static void acpi_smmu_enable_cavium(struct arm_smmu_device *smmu)
 {
 	u32 cpu_model;
@@ -2654,7 +2678,7 @@ static void acpi_smmu_enable_cavium(struct arm_smmu_device *smmu)
 		return;
 
 	cpu_model = read_cpuid_id() & MIDR_CPU_MODEL_MASK;
-	if (cpu_model != 0x420f5160)
+	if (cpu_model != MIDR_CPU_MODEL(ARM_CPU_IMP_BRCM, BRCM_CPU_PART_VULCAN))
 		return;
 
 	smmu->options |= ARM_SMMU_OPT_PAGE0_REGS_ONLY;
@@ -2662,7 +2686,7 @@ static void acpi_smmu_enable_cavium(struct arm_smmu_device *smmu)
 
 static void acpi_smmu_get_options(u32 model, struct arm_smmu_device *smmu)
 {
-	if (model == ACPI_IORT_SMMU_CAVIUM_CN99XX)
+	if (model == ACPI_IORT_SMMU_V3_CAVIUM_CN99XX)
 		smmu->options |= ARM_SMMU_OPT_PAGE0_REGS_ONLY;
 
 	acpi_smmu_enable_cavium(smmu);
@@ -2721,7 +2745,7 @@ static int arm_smmu_device_dt_probe(struct platform_device *pdev,
 
 static unsigned long arm_smmu_resource_size(struct arm_smmu_device *smmu)
 {
-	if (ARM_SMMU_PAGE0_REGS_ONLY(smmu))
+	if (smmu->options & ARM_SMMU_OPT_PAGE0_REGS_ONLY)
 		return SZ_64K;
 	else
 		return SZ_128K;
@@ -2750,6 +2774,9 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
 			return ret;
 	}
 
+	/* Set bypass mode according to firmware probing result */
+	bypass = !!ret;
+
 	/* Base address */
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (resource_size(res) + 1 < arm_smmu_resource_size(smmu)) {
@@ -2762,25 +2789,27 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
 		return PTR_ERR(smmu->base);
 
 	/* Interrupt lines */
-	irq = platform_get_irq_byname(pdev, "eventq");
+
+	irq = platform_get_irq_byname(pdev, "combined");
 	if (irq > 0)
-		smmu->evtq.q.irq = irq;
+		smmu->combined_irq = irq;
+	else {
+		irq = platform_get_irq_byname(pdev, "eventq");
+		if (irq > 0)
+			smmu->evtq.q.irq = irq;
 
-	irq = platform_get_irq_byname(pdev, "priq");
-	if (irq > 0)
-		smmu->priq.q.irq = irq;
+		irq = platform_get_irq_byname(pdev, "priq");
+		if (irq > 0)
+			smmu->priq.q.irq = irq;
 
-	irq = platform_get_irq_byname(pdev, "cmdq-sync");
-	if (irq > 0)
-		smmu->cmdq.q.irq = irq;
+		irq = platform_get_irq_byname(pdev, "cmdq-sync");
+		if (irq > 0)
+			smmu->cmdq.q.irq = irq;
 
-	irq = platform_get_irq_byname(pdev, "gerror");
-	if (irq > 0)
-		smmu->gerr_irq = irq;
-
-	/* Set bypass mode according to firmware probing result */
-	bypass = !!ret;
-
+		irq = platform_get_irq_byname(pdev, "gerror");
+		if (irq > 0)
+			smmu->gerr_irq = irq;
+	}
 	/* Probe the h/w */
 	ret = arm_smmu_device_hw_probe(smmu);
 	if (ret)

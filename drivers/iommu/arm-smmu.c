@@ -311,6 +311,14 @@ enum arm_smmu_implementation {
 	CAVIUM_SMMUV2,
 };
 
+/* Until ACPICA headers cover IORT rev. C */
+#ifndef ACPI_IORT_SMMU_CORELINK_MMU401
+#define ACPI_IORT_SMMU_CORELINK_MMU401	0x4
+#endif
+#ifndef ACPI_IORT_SMMU_CAVIUM_THUNDERX
+#define ACPI_IORT_SMMU_CAVIUM_THUNDERX	0x5
+#endif
+
 struct arm_smmu_s2cr {
 	struct iommu_group		*group;
 	int				count;
@@ -2029,7 +2037,7 @@ static int acpi_smmu_get_data(u32 model, struct arm_smmu_device *smmu)
 		smmu->version = ARM_SMMU_V2;
 		smmu->model = ARM_MMU500;
 		break;
-	case ACPI_IORT_SMMU_CAVIUM_SMMUV2:
+	case ACPI_IORT_SMMU_CAVIUM_THUNDERX:
 		smmu->version = ARM_SMMU_V2;
 		smmu->model = CAVIUM_SMMUV2;
 		break;
