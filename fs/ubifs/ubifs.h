@@ -1764,6 +1764,7 @@ ssize_t ubifs_listxattr(struct dentry *dentry, char *buffer, size_t size);
 int ubifs_removexattr(struct dentry *dentry, const char *name);
 int ubifs_init_security(struct inode *dentry, struct inode *inode,
 			const struct qstr *qstr);
+void ubifs_evict_xattr_inode(struct ubifs_info *c, ino_t xattr_inum);
 
 /* super.c */
 struct inode *ubifs_iget(struct super_block *sb, unsigned long inum);
