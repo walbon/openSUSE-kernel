@@ -3063,6 +3063,19 @@ char *d_absolute_path(const struct path *path,
 	return res;
 }
 
+static inline bool d_unlinked_safe(struct dentry *de)
+{
+	bool ret;
+	ret = d_unlinked(de);
+	if (unlikely(ret)) {
+		/* Maybe racing with d_move called from lustre */
+		spin_lock(&de->d_lock);
+		ret = d_unlinked(de);
+		spin_unlock(&de->d_lock);
+	}
+	return ret;
+}
+
 /*
  * same as __d_path but appends "(deleted)" for unlinked files.
  */
@@ -3071,7 +3084,7 @@ static int path_with_deleted(const struct path *path,
 			     char **buf, int *buflen)
 {
 	prepend(buf, buflen, "\0", 1);
-	if (d_unlinked(path->dentry)) {
+	if (d_unlinked_safe(path->dentry)) {
 		int error = prepend(buf, buflen, " (deleted)", 10);
 		if (error)
 			return error;
@@ -3235,7 +3248,7 @@ char *dentry_path(struct dentry *dentry, char *buf, int buflen)
 	char *p = NULL;
 	char *retval;
 
-	if (d_unlinked(dentry)) {
+	if (d_unlinked_safe(dentry)) {
 		p = buf + buflen;
 		if (prepend(&p, &buflen, "//deleted", 10) != 0)
 			goto Elong;
@@ -3292,7 +3305,7 @@ SYSCALL_DEFINE2(getcwd, char __user *, buf, unsigned long, size)
 	get_fs_root_and_pwd_rcu(current->fs, &root, &pwd);
 
 	error = -ENOENT;
-	if (!d_unlinked(pwd.dentry)) {
+	if (!d_unlinked_safe(pwd.dentry)) {
 		unsigned long len;
 		char *cwd = page + PATH_MAX;
 		int buflen = PATH_MAX;
