@@ -4314,12 +4314,10 @@ xlog_do_recovery_pass(
 	struct xlog		*log,
 	xfs_daddr_t		head_blk,
 	xfs_daddr_t		tail_blk,
-	int			pass,
-	xfs_daddr_t		*first_bad)	/* out: first bad log rec */
+	int			pass)
 {
 	xlog_rec_header_t	*rhead;
 	xfs_daddr_t		blk_no;
-	xfs_daddr_t		rhead_blk;
 	char			*offset;
 	xfs_buf_t		*hbp, *dbp;
 	int			error = 0, h_size, h_len;
@@ -4330,7 +4328,6 @@ xlog_do_recovery_pass(
 	LIST_HEAD		(buffer_list);
 
 	ASSERT(head_blk != tail_blk);
-	rhead_blk = 0;
 
 	/*
 	 * Read the header of the tail block and get the iclog buffer size from
@@ -4405,7 +4402,7 @@ xlog_do_recovery_pass(
 	}
 
 	memset(rhash, 0, sizeof(rhash));
-	blk_no = rhead_blk = tail_blk;
+	blk_no = tail_blk;
 	if (tail_blk > head_blk) {
 		/*
 		 * Perform recovery around the end of the physical log.
@@ -4516,14 +4513,11 @@ xlog_do_recovery_pass(
 						     pass, &buffer_list);
 			if (error)
 				goto bread_err2;
-
 			blk_no += bblks;
-			rhead_blk = blk_no;
 		}
 
 		ASSERT(blk_no >= log->l_logBBsize);
 		blk_no -= log->l_logBBsize;
-		rhead_blk = blk_no;
 	}
 
 	/* read first part of physical log */
@@ -4548,18 +4542,13 @@ xlog_do_recovery_pass(
 					     &buffer_list);
 		if (error)
 			goto bread_err2;
-
 		blk_no += bblks + hblks;
-		rhead_blk = blk_no;
 	}
 
  bread_err2:
 	xlog_put_bp(dbp);
  bread_err1:
 	xlog_put_bp(hbp);
-
-	if (error && first_bad)
-		*first_bad = rhead_blk;
 
 	/*
 	 * Submit buffers that have been added from the last record processed,
@@ -4605,7 +4594,7 @@ xlog_do_log_recovery(
 		INIT_LIST_HEAD(&log->l_buf_cancel_table[i]);
 
 	error = xlog_do_recovery_pass(log, head_blk, tail_blk,
-				      XLOG_RECOVER_PASS1, NULL);
+				      XLOG_RECOVER_PASS1);
 	if (error != 0) {
 		kmem_free(log->l_buf_cancel_table);
 		log->l_buf_cancel_table = NULL;
@@ -4616,7 +4605,7 @@ xlog_do_log_recovery(
 	 * When it is complete free the table of buf cancel items.
 	 */
 	error = xlog_do_recovery_pass(log, head_blk, tail_blk,
-				      XLOG_RECOVER_PASS2, NULL);
+				      XLOG_RECOVER_PASS2);
 #ifdef DEBUG
 	if (!error) {
 		int	i;
