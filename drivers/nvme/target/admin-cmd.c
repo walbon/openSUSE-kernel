@@ -183,8 +183,8 @@ static void nvmet_execute_identify_ctrl(struct nvmet_req *req)
 	id->vid = 0;
 	id->ssvid = 0;
 
-	bin2hex(id->sn, &ctrl->serial, min(sizeof(ctrl->serial),
-					   sizeof(id->sn) / 2));
+	bin2hex(id->sn, &ctrl->subsys->serial,
+			min(sizeof(ctrl->subsys->serial), sizeof(id->sn) / 2));
 
 	memcpy_and_pad(id->mn, sizeof(id->mn), MODEL, sizeof(MODEL) - 1, ' ');
 	memcpy_and_pad(id->fr, sizeof(id->fr),
