@@ -111,6 +111,7 @@ struct nvmet_ctrl {
 
 	struct mutex		lock;
 	u64			cap;
+	u64			serial;
 	u32			cc;
 	u32			csts;
 
@@ -150,7 +151,9 @@ struct nvmet_subsys {
 	u16			max_qid;
 
 	u64			ver;
+#ifndef __GENKSYMS__
 	u64			serial;
+#endif
 	char			*subsysnqn;
 
 	struct config_group	group;
