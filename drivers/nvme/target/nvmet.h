@@ -151,6 +151,9 @@ struct nvmet_subsys {
 	u16			max_qid;
 
 	u64			ver;
+#ifndef __GENKSYMS__
+	u64			serial;
+#endif
 	char			*subsysnqn;
 
 	struct config_group	group;
