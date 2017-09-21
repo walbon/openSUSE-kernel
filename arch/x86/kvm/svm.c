@@ -5379,7 +5379,6 @@ static struct kvm_x86_ops svm_x86_ops = {
 	.enable_irq_window = enable_irq_window,
 	.update_cr8_intercept = update_cr8_intercept,
 	.set_virtual_x2apic_mode = svm_set_virtual_x2apic_mode,
-	.get_enable_apicv = svm_get_enable_apicv,
 	.refresh_apicv_exec_ctrl = svm_refresh_apicv_exec_ctrl,
 	.load_eoi_exitmap = svm_load_eoi_exitmap,
 	.sync_pir_to_irr = svm_sync_pir_to_irr,
@@ -5428,12 +5427,15 @@ static int __init svm_init(void)
 	int r;
 
 	kvm_set_pkru = svm_set_pkru;
+	kvm_get_enable_apicv = svm_get_enable_apicv;
 
 	r = kvm_init(&svm_x86_ops, sizeof(struct vcpu_svm),
 		     __alignof__(struct vcpu_svm), THIS_MODULE);
 
-	if (r)
+	if (r) {
 		kvm_set_pkru = NULL;
+		kvm_get_enable_apicv = NULL;
+	}
 
 	return r;
 }

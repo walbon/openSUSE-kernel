@@ -10950,7 +10950,6 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.update_cr8_intercept = update_cr8_intercept,
 	.set_virtual_x2apic_mode = vmx_set_virtual_x2apic_mode,
 	.set_apic_access_page_addr = vmx_set_apic_access_page_addr,
-	.get_enable_apicv = vmx_get_enable_apicv,
 	.refresh_apicv_exec_ctrl = vmx_refresh_apicv_exec_ctrl,
 	.load_eoi_exitmap = vmx_load_eoi_exitmap,
 	.hwapic_irr_update = vmx_hwapic_irr_update,
@@ -11011,10 +11010,13 @@ static int __init vmx_init(void)
 	int r;
 
 	kvm_set_pkru = vmx_set_pkru;
+	kvm_get_enable_apicv = vmx_get_enable_apicv;
+
 	r = kvm_init(&vmx_x86_ops, sizeof(struct vcpu_vmx),
                      __alignof__(struct vcpu_vmx), THIS_MODULE);
 	if (r) {
 		kvm_set_pkru = NULL;
+		kvm_get_enable_apicv = NULL;
 		return r;
 	}
 

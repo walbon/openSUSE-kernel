@@ -882,7 +882,7 @@ struct kvm_x86_ops {
 	void (*enable_nmi_window)(struct kvm_vcpu *vcpu);
 	void (*enable_irq_window)(struct kvm_vcpu *vcpu);
 	void (*update_cr8_intercept)(struct kvm_vcpu *vcpu, int tpr, int irr);
-	bool (*get_enable_apicv)(struct kvm_vcpu *vcpu);
+	bool (*get_enable_apicv)(void);
 	void (*refresh_apicv_exec_ctrl)(struct kvm_vcpu *vcpu);
 	void (*hwapic_irr_update)(struct kvm_vcpu *vcpu, int max_irr);
 	void (*hwapic_isr_update)(struct kvm *kvm, int isr);
@@ -981,8 +981,9 @@ struct kvm_arch_async_pf {
 
 extern struct kvm_x86_ops *kvm_x86_ops;
 
-/* kABI hack */
+/* kABI hacks */
 extern void (*kvm_set_pkru)(struct kvm_vcpu *vcpu, u32 pkru);
+extern bool (*kvm_get_enable_apicv)(struct kvm_vcpu *vcpu);
 
 int kvm_mmu_module_init(void);
 void kvm_mmu_module_exit(void);

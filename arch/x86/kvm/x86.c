@@ -105,6 +105,9 @@ EXPORT_SYMBOL_GPL(kvm_x86_ops);
 void (*kvm_set_pkru)(struct kvm_vcpu *vcpu, u32 pkru);
 EXPORT_SYMBOL_GPL(kvm_set_pkru);
 
+bool (*kvm_get_enable_apicv)(struct kvm_vcpu *vcpu);
+EXPORT_SYMBOL_GPL(kvm_get_enable_apicv);
+
 static bool __read_mostly ignore_msrs = 0;
 module_param(ignore_msrs, bool, S_IRUGO | S_IWUSR);
 
@@ -7685,7 +7688,7 @@ int kvm_arch_vcpu_init(struct kvm_vcpu *vcpu)
 	BUG_ON(vcpu->kvm == NULL);
 	kvm = vcpu->kvm;
 
-	vcpu->arch.apicv_active = kvm_x86_ops->get_enable_apicv(vcpu);
+	vcpu->arch.apicv_active = kvm_get_enable_apicv(vcpu);
 	vcpu->arch.pv.pv_unhalted = false;
 	vcpu->arch.emulate_ctxt.ops = &emulate_ops;
 	if (!irqchip_in_kernel(kvm) || kvm_vcpu_is_reset_bsp(vcpu))
