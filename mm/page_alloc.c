@@ -3577,15 +3577,15 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 		.migratetype = gfpflags_to_migratetype(gfp_mask),
 	};
 
+	gfp_mask &= gfp_allowed_mask;
+	alloc_mask = gfp_mask;
+
 	if (cpusets_enabled()) {
 		alloc_mask |= __GFP_HARDWALL;
 		alloc_flags |= ALLOC_CPUSET;
 		if (!ac.nodemask)
 			ac.nodemask = &cpuset_current_mems_allowed;
 	}
-
-	gfp_mask &= gfp_allowed_mask;
-	alloc_mask = gfp_mask;
 
 	lockdep_trace_alloc(gfp_mask);
 
