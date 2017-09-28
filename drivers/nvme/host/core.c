@@ -1619,7 +1619,7 @@ static umode_t nvme_ns_attrs_are_visible(struct kobject *kobj,
 	struct nvme_ns *ns = dev_to_disk(dev)->private_data;
 
 	if (a == &dev_attr_uuid.attr) {
-		if (!memchr_inv(ns->uuid, 0, sizeof(ns->uuid)) ||
+		if (!memchr_inv(ns->uuid, 0, sizeof(ns->uuid)) &&
 		    !memchr_inv(ns->nguid, 0, sizeof(ns->nguid)))
 			return 0;
 	}
