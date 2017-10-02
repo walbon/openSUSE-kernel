@@ -290,13 +290,37 @@ static int nearby_node(int apicid)
 }
 #endif
 
+#ifdef CONFIG_SMP
+/*
+ * Fix up cpu_core_id for pre-F17h systems to be in the
+ * [0 .. cores_per_node - 1] range. Not really needed but
+ * kept so as not to break existing setups.
+ */
+static void legacy_fixup_core_id(struct cpuinfo_x86 *c, int cpu, u8 node_id)
+{
+	u32 cores_per_node;
+	u32 cus_per_node;
+
+	if (c->x86 >= 0x17)
+		return;
+
+	cores_per_node = c->x86_max_cores / nodes_per_socket;
+	cus_per_node = c->x86_max_cores / nodes_per_socket;
+
+	/* store NodeID, use llc_shared_map to store sibling info */
+	per_cpu(cpu_llc_id, cpu) = node_id;
+
+	/* core id has to be in the [0 .. cores_per_node - 1] range */
+	c->cpu_core_id %= cores_per_node;
+	c->compute_unit_id %= cus_per_node;
+}
+
 /*
  * Fixup core topology information for
  * (1) AMD multi-node processors
  *     Assumption: Number of cores in each internal node is the same.
  * (2) AMD processors supporting compute units
  */
-#ifdef CONFIG_SMP
 static void amd_get_topology(struct cpuinfo_x86 *c)
 {
 	u32 cores_per_cu = 1;
@@ -332,21 +356,9 @@ static void amd_get_topology(struct cpuinfo_x86 *c)
 	} else
 		return;
 
-	/* fixup multi-node processor information */
 	if (nodes_per_socket > 1) {
-		u32 cores_per_node;
-		u32 cus_per_node;
-
 		set_cpu_cap(c, X86_FEATURE_AMD_DCM);
-		cores_per_node = c->x86_max_cores / nodes_per_socket;
-		cus_per_node = cores_per_node / cores_per_cu;
-
-		/* store NodeID, use llc_shared_map to store sibling info */
-		per_cpu(cpu_llc_id, cpu) = node_id;
-
-		/* core id has to be in the [0 .. cores_per_node - 1] range */
-		c->cpu_core_id %= cores_per_node;
-		c->compute_unit_id %= cus_per_node;
+		legacy_fixup_core_id(c, cpu, node_id);
 	}
 }
 #endif
