@@ -25,10 +25,10 @@ performance of a specific datapath. For example, agents of a L3 cache can be
 a specific CPU or an I/O bridge. Each PMU has a set of 2 registers capable of
 masking the agents from which the request come from. If the bit with
 the bit number corresponding to the agent is set, the event is counted only if
-it is caused by a request from that agent. Each agent ID bit is mapping to a
-corresponding bit in "config1" fields. By default, the event will be counted
-for all agent requests (config1 = 0xffffffffffffffffULL). For all the supported
-agents of each PMU, please refer to APM X-Gene User Manual.
+it is caused by a request from that agent. Each agent ID bit is inversely mapped
+to a corresponding bit in "config1" field. By default, the event will be
+counted for all agent requests (config1 = 0x0). For all the supported agents of
+each PMU, please refer to APM X-Gene User Manual.
 
 Each perf driver also provides a "cpumask" sysfs attribute, which contains a
 single CPU ID of the processor which will be used to handle all the PMU events.
@@ -42,7 +42,7 @@ Example for perf tool use:
 
  / # perf stat -a -e l3c0/read-miss/,mcb1/csw-write-request/ sleep 1
 
- / # perf stat -a -e l3c0/read-miss,config1=0x01/ sleep 1
+ / # perf stat -a -e l3c0/read-miss,config1=0xfffffffffffffffe/ sleep 1
 
 The driver does not support sampling, therefore "perf record" will
 not work. Per-task (without "-a") perf sessions are not supported.

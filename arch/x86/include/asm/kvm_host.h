@@ -979,8 +979,9 @@ struct kvm_arch_async_pf {
 
 extern struct kvm_x86_ops *kvm_x86_ops;
 
-/* kABI hack */
+/* kABI hacks */
 extern void (*kvm_set_pkru)(struct kvm_vcpu *vcpu, u32 pkru);
+extern bool (*kvm_get_enable_apicv)(struct kvm_vcpu *vcpu);
 
 int kvm_mmu_module_init(void);
 void kvm_mmu_module_exit(void);
