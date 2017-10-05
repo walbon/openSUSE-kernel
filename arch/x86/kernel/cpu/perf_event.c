@@ -2003,25 +2003,22 @@ static void refresh_pce(void *ignored)
 		load_mm_cr4(current->active_mm);
 }
 
-static void x86_pmu_event_mapped(struct perf_event *event)
+static void x86_pmu_event_mapped(struct perf_event *event, struct mm_struct *mm)
 {
 	if (!(event->hw.flags & PERF_X86_EVENT_RDPMC_ALLOWED))
 		return;
 
-	if (atomic_inc_return(&current->mm->context.perf_rdpmc_allowed) == 1)
-		on_each_cpu_mask(mm_cpumask(current->mm), refresh_pce, NULL, 1);
+	if (atomic_inc_return(&mm->context.perf_rdpmc_allowed) == 1)
+		on_each_cpu_mask(mm_cpumask(mm), refresh_pce, NULL, 1);
 }
 
-static void x86_pmu_event_unmapped(struct perf_event *event)
+static void x86_pmu_event_unmapped(struct perf_event *event, struct mm_struct *mm)
 {
-	if (!current->mm)
-		return;
-
 	if (!(event->hw.flags & PERF_X86_EVENT_RDPMC_ALLOWED))
 		return;
 
-	if (atomic_dec_and_test(&current->mm->context.perf_rdpmc_allowed))
-		on_each_cpu_mask(mm_cpumask(current->mm), refresh_pce, NULL, 1);
+	if (atomic_dec_and_test(&mm->context.perf_rdpmc_allowed))
+		on_each_cpu_mask(mm_cpumask(mm), refresh_pce, NULL, 1);
 }
 
 static int x86_pmu_event_idx(struct perf_event *event)
