@@ -30,6 +30,38 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_plane_helper.h>
 
+static DEFINE_SPINLOCK(priv_objs_lock);
+static LIST_HEAD(priv_objs_list);
+
+struct drm_atomic_state_private_objs *
+__drm_atomic_state_get_private_objs(struct drm_atomic_state *state)
+{
+	unsigned long flags;
+	struct drm_atomic_state_private_objs *p;
+	struct drm_atomic_state_private_objs *found = NULL;
+
+	spin_lock_irqsave(&priv_objs_lock, flags);
+	list_for_each_entry(p, &priv_objs_list, list) {
+		if (p->state == state) {
+			found = p;
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&priv_objs_lock, flags);
+	return found;
+}
+EXPORT_SYMBOL_GPL(__drm_atomic_state_get_private_objs);
+
+static void
+__drm_atomic_state_free_private_objs(struct drm_atomic_state_private_objs *p)
+{
+	spin_lock_irq(&priv_objs_lock);
+	list_del(&p->list);
+	spin_unlock_irq(&priv_objs_lock);
+	kfree(p->private_objs);
+	kfree(p);
+}
+
 /**
  * drm_atomic_state_default_release -
  * release memory initialized by drm_atomic_state_init
@@ -178,6 +210,20 @@ void drm_atomic_state_default_clear(struct drm_atomic_state *state)
 		state->planes[i] = NULL;
 		state->plane_states[i] = NULL;
 	}
+
+	{
+		struct drm_atomic_state_private_objs *p;
+		p = __drm_atomic_state_get_private_objs(state);
+		if (p) {
+			for (i = 0; i < p->num_private_objs; i++) {
+				void *obj_state = p->private_objs[i].obj_state;
+
+				p->private_objs[i].funcs->destroy_state(obj_state);
+			}
+			__drm_atomic_state_free_private_objs(p);
+		}
+	}
+
 }
 EXPORT_SYMBOL(drm_atomic_state_default_clear);
 
@@ -767,6 +813,77 @@ static int drm_atomic_plane_check(struct drm_plane *plane,
 
 	return 0;
 }
+
+/**
+ * drm_atomic_get_private_obj_state - get private object state
+ * @state: global atomic state
+ * @obj: private object to get the state for
+ * @funcs: pointer to the struct of function pointers that identify the object
+ * type
+ *
+ * This function returns the private object state for the given private object,
+ * allocating the state if needed. It does not grab any locks as the caller is
+ * expected to care of any required locking.
+ *
+ * RETURNS:
+ *
+ * Either the allocated state or the error code encoded into a pointer.
+ */
+void *
+drm_atomic_get_private_obj_state(struct drm_atomic_state *state, void *obj,
+			      const struct drm_private_state_funcs *funcs)
+{
+	int index, num_objs, i;
+	size_t size;
+	struct drm_atomic_state_private_objs *p;
+	struct __drm_private_objs_state *arr;
+
+	p = __drm_atomic_state_get_private_objs(state);
+	if (p) {
+		for (i = 0; i < p->num_private_objs; i++)
+			if (obj == p->private_objs[i].obj &&
+			    p->private_objs[i].obj_state)
+				return p->private_objs[i].obj_state;
+
+		num_objs = p->num_private_objs + 1;
+		size = sizeof(*p->private_objs) * num_objs;
+		arr = krealloc(p->private_objs, size, GFP_KERNEL);
+		if (!arr)
+			return ERR_PTR(-ENOMEM);
+		p->private_objs = arr;
+	} else {
+		p = kzalloc(sizeof(*p), GFP_KERNEL);
+		if (!p)
+			return ERR_PTR(-ENOMEM);
+		p->state = state;
+		p->private_objs = kmalloc(sizeof(*p->private_objs), GFP_KERNEL);
+		if (!p->private_objs) {
+			kfree(p);
+			return ERR_PTR(-ENOMEM);
+		}
+		num_objs = 1;
+		spin_lock_irq(&priv_objs_lock);
+		list_add(&p->list, &priv_objs_list);
+		spin_unlock_irq(&priv_objs_lock);
+	}
+
+	index = p->num_private_objs;
+	memset(&p->private_objs[index], 0, sizeof(*p->private_objs));
+
+	p->private_objs[index].obj_state = funcs->duplicate_state(state, obj);
+	if (!p->private_objs[index].obj_state)
+		return ERR_PTR(-ENOMEM);
+
+	p->private_objs[index].obj = obj;
+	p->private_objs[index].funcs = funcs;
+	p->num_private_objs = num_objs;
+
+	DRM_DEBUG_ATOMIC("Added new private object state %p to %p\n",
+			 p->private_objs[index].obj_state, state);
+
+	return p->private_objs[index].obj_state;
+}
+EXPORT_SYMBOL(drm_atomic_get_private_obj_state);
 
 /**
  * drm_atomic_get_connector_state - get connector state
