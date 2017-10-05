@@ -39,6 +39,9 @@
 
 #include "perf_event.h"
 
+static void x86_pmu_event_mapped(struct perf_event *event, struct mm_struct *mm);
+static void x86_pmu_event_unmapped(struct perf_event *event, struct mm_struct *mm);
+
 struct x86_pmu x86_pmu __read_mostly;
 
 DEFINE_PER_CPU(struct cpu_hw_events, cpu_hw_events) = {
@@ -1751,6 +1754,9 @@ static int __init init_hw_perf_events(void)
 	pr_info("... fixed-purpose events:   %d\n",     x86_pmu.num_counters_fixed);
 	pr_info("... event mask:             %016Lx\n", x86_pmu.intel_ctrl);
 
+	kabi_perf_event_mapped = x86_pmu_event_mapped;
+	kabi_perf_event_unmapped = x86_pmu_event_unmapped;
+
 	perf_pmu_register(&pmu, "cpu", PERF_TYPE_RAW);
 	perf_cpu_notifier(x86_pmu_notifier);
 
@@ -2008,6 +2014,10 @@ static void refresh_pce(void *ignored)
 
 static void x86_pmu_event_mapped(struct perf_event *event, struct mm_struct *mm)
 {
+	/* Its called for every pmu - need to check if it is for us */
+	if (event->pmu != &pmu)
+		return;
+
 	if (!(event->hw.flags & PERF_X86_EVENT_RDPMC_ALLOWED))
 		return;
 
@@ -2015,8 +2025,13 @@ static void x86_pmu_event_mapped(struct perf_event *event, struct mm_struct *mm)
 		on_each_cpu_mask(mm_cpumask(mm), refresh_pce, NULL, 1);
 }
 
+//static void x86_pmu_event_mapped(struct perf_event *event, struct mm_struct *mm)
 static void x86_pmu_event_unmapped(struct perf_event *event, struct mm_struct *mm)
 {
+	/* Its called for every pmu - need to check if it is for us */
+	if (event->pmu != &pmu)
+		return;
+
 	if (!(event->hw.flags & PERF_X86_EVENT_RDPMC_ALLOWED))
 		return;
 
@@ -2119,9 +2134,6 @@ static struct pmu pmu = {
 	.attr_groups		= x86_pmu_attr_groups,
 
 	.event_init		= x86_pmu_event_init,
-
-	.event_mapped		= x86_pmu_event_mapped,
-	.event_unmapped		= x86_pmu_event_unmapped,
 
 	.add			= x86_pmu_add,
 	.del			= x86_pmu_del,
