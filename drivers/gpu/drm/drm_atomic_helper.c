@@ -1444,6 +1444,10 @@ void drm_atomic_helper_cleanup_planes(struct drm_device *dev,
 }
 EXPORT_SYMBOL(drm_atomic_helper_cleanup_planes);
 
+/* XXX defined in drm_atomic.c */
+struct drm_atomic_state_private_objs *
+__drm_atomic_state_get_private_objs(struct drm_atomic_state *state);
+
 /**
  * drm_atomic_helper_swap_state - store atomic state into current sw state
  * @dev: DRM device
@@ -1473,6 +1477,9 @@ void drm_atomic_helper_swap_state(struct drm_device *dev,
 				  struct drm_atomic_state *state)
 {
 	int i;
+	void *obj, *obj_state;
+	const struct drm_private_state_funcs *funcs;
+	struct drm_atomic_state_private_objs *pstate;
 
 	for (i = 0; i < state->num_connector; i++) {
 		struct drm_connector *connector = state->connectors[i];
@@ -1505,6 +1512,12 @@ void drm_atomic_helper_swap_state(struct drm_device *dev,
 		plane->state->state = state;
 		swap(state->plane_states[i], plane->state);
 		plane->state->state = NULL;
+	}
+
+	pstate = __drm_atomic_state_get_private_objs(state);
+	if (pstate) {
+		__for_each_private_obj(pstate, obj, obj_state, i, funcs)
+			funcs->swap_state(obj, &pstate->private_objs[i].obj_state);
 	}
 }
 EXPORT_SYMBOL(drm_atomic_helper_swap_state);

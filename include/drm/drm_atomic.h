@@ -89,6 +89,11 @@ drm_atomic_get_existing_plane_state(struct drm_atomic_state *state,
 	return state->plane_states[drm_plane_index(plane)];
 }
 
+void * __must_check
+drm_atomic_get_private_obj_state(struct drm_atomic_state *state,
+			      void *obj,
+			      const struct drm_private_state_funcs *funcs);
+
 /**
  * drm_atomic_get_existing_connector_state - get connector state, if it exists
  * @state: global atomic state object
@@ -166,6 +171,47 @@ int __must_check drm_atomic_async_commit(struct drm_atomic_state *state);
 	     (plane_state) = (state)->plane_states[__i], 1);		\
 	     (__i)++)							\
 		for_each_if (plane_state)
+
+/**
+ * __for_each_private_obj - iterate over all private objects
+ * @__state: &struct drm_atomic_state pointer
+ * @obj: private object iteration cursor
+ * @obj_state: private object state iteration cursor
+ * @__i: int iteration cursor, for macro-internal use
+ * @__funcs: &struct drm_private_state_funcs iteration cursor
+ *
+ * This macro iterates over the array containing private object data in atomic
+ * state
+ */
+#define __for_each_private_obj(__state, obj, obj_state, __i, __funcs)	\
+	for ((__i) = 0;							\
+	     (__i) < (__state)->num_private_objs &&			\
+	     ((obj) = (__state)->private_objs[__i].obj,			\
+	      (__funcs) = (__state)->private_objs[__i].funcs,		\
+	      (obj_state) = (__state)->private_objs[__i].obj_state,	\
+	      1);							\
+	     (__i)++)							\
+
+/**
+ * for_each_private_obj - iterate over a specify type of private object
+ * @__state: &struct drm_atomic_state pointer
+ * @obj_funcs: &struct drm_private_state_funcs function table to filter
+ * 	private objects
+ * @obj: private object iteration cursor
+ * @obj_state: private object state iteration cursor
+ * @__i: int iteration cursor, for macro-internal use
+ * @__funcs: &struct drm_private_state_funcs iteration cursor
+ *
+ * This macro iterates over the private objects state array while filtering the
+ * objects based on the vfunc table that is passed as @obj_funcs. New macros
+ * can be created by passing in the vfunc table associated with a specific
+ * private object.
+ */
+#define for_each_private_obj(__state, obj_funcs, obj, obj_state, __i, __funcs)	\
+	__for_each_private_obj(__state, obj, obj_state, __i, __funcs)		\
+		for_each_if (__funcs == obj_funcs)
+
+
 static inline bool
 drm_atomic_crtc_needs_modeset(struct drm_crtc_state *state)
 {

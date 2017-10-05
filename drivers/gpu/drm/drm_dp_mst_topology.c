@@ -32,6 +32,27 @@
 
 #include <drm/drm_fixed.h>
 
+static DEFINE_SPINLOCK(mgr_priv_objs_lock);
+static LIST_HEAD(mgr_priv_objs_list);
+
+static struct drm_dp_mst_topology_mgr_priv_state *
+__get_mgr_priv_state(struct drm_dp_mst_topology_mgr *mgr)
+{
+	unsigned long flags;
+	struct drm_dp_mst_topology_mgr_priv_state *p;
+	struct drm_dp_mst_topology_mgr_priv_state *found = NULL;
+
+	spin_lock_irqsave(&mgr_priv_objs_lock, flags);
+	list_for_each_entry(p, &mgr_priv_objs_list, list) {
+		if (p->mgr == mgr) {
+			found = p;
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&mgr_priv_objs_lock, flags);
+	return found;
+}
+
 /**
  * DOC: dp mst helper
  *
@@ -2917,6 +2938,75 @@ static void drm_dp_destroy_connector_work(struct work_struct *work)
 		(*mgr->cbs->hotplug)(mgr);
 }
 
+void *drm_dp_mst_duplicate_state(struct drm_atomic_state *state, void *obj)
+{
+	struct drm_dp_mst_topology_mgr *mgr = obj;
+	struct drm_dp_mst_topology_state *new_mst_state;
+	struct drm_dp_mst_topology_mgr_priv_state *pstate;
+
+	pstate = __get_mgr_priv_state(mgr);
+	if (WARN_ON(!pstate))
+		return NULL;
+	if (WARN_ON(!pstate->state))
+		return NULL;
+
+	new_mst_state = kmemdup(pstate->state, sizeof(*new_mst_state), GFP_KERNEL);
+	if (new_mst_state)
+		new_mst_state->state = state;
+	return new_mst_state;
+}
+
+void drm_dp_mst_swap_state(void *obj, void **obj_state_ptr)
+{
+	struct drm_dp_mst_topology_mgr *mgr = obj;
+	struct drm_dp_mst_topology_state **topology_state_ptr;
+	struct drm_dp_mst_topology_mgr_priv_state *pstate;
+
+	pstate = __get_mgr_priv_state(mgr);
+	if (WARN_ON(!pstate))
+		return;
+
+	topology_state_ptr = (struct drm_dp_mst_topology_state **)obj_state_ptr;
+
+	pstate->state->state = (*topology_state_ptr)->state;
+	swap(*topology_state_ptr, pstate->state);
+	pstate->state->state = NULL;
+}
+
+void drm_dp_mst_destroy_state(void *obj_state)
+{
+	kfree(obj_state);
+}
+
+static const struct drm_private_state_funcs mst_state_funcs = {
+	.duplicate_state = drm_dp_mst_duplicate_state,
+	.swap_state = drm_dp_mst_swap_state,
+	.destroy_state = drm_dp_mst_destroy_state,
+};
+
+/**
+ * drm_atomic_get_mst_topology_state: get MST topology state
+ *
+ * @state: global atomic state
+ * @mgr: MST topology manager, also the private object in this case
+ *
+ * This function wraps drm_atomic_get_priv_obj_state() passing in the MST atomic
+ * state vtable so that the private object state returned is that of a MST
+ * topology object. Also, drm_atomic_get_private_obj_state() expects the caller
+ * to care of the locking, so warn if don't hold the connection_mutex.
+ *
+ * RETURNS:
+ *
+ * The MST topology state or error pointer.
+ */
+struct drm_dp_mst_topology_state *drm_atomic_get_mst_topology_state(struct drm_atomic_state *state,
+								    struct drm_dp_mst_topology_mgr *mgr)
+{
+	return drm_atomic_get_private_obj_state(state, mgr,
+						&mst_state_funcs);
+}
+EXPORT_SYMBOL(drm_atomic_get_mst_topology_state);
+
 /**
  * drm_dp_mst_topology_mgr_init - initialise a topology manager
  * @mgr: manager struct to initialise
@@ -2959,6 +3049,30 @@ int drm_dp_mst_topology_mgr_init(struct drm_dp_mst_topology_mgr *mgr,
 		return -ENOMEM;
 	set_bit(0, &mgr->payload_mask);
 	test_calc_pbn_mode();
+
+	{
+		struct drm_dp_mst_topology_mgr_priv_state *pstate;
+
+		pstate = kzalloc(sizeof(*pstate), GFP_KERNEL);
+		if (!pstate)
+			return -ENOMEM;
+		pstate->mgr = mgr;
+		pstate->state = kzalloc(sizeof(*pstate->state), GFP_KERNEL);
+		if (!pstate->state) {
+			kfree(pstate);
+			return -ENOMEM;
+		}
+		pstate->state->mgr = mgr;
+
+		/* max. time slots - one slot for MTP header */
+		pstate->state->avail_slots = 63;
+		/* pstate->funcs = &mst_state_funcs; */
+
+		spin_lock_irq(&mgr_priv_objs_lock);
+		list_add(&pstate->list, &mgr_priv_objs_list);
+		spin_unlock_irq(&mgr_priv_objs_lock);
+	}
+
 	return 0;
 }
 EXPORT_SYMBOL(drm_dp_mst_topology_mgr_init);
@@ -2979,6 +3093,19 @@ void drm_dp_mst_topology_mgr_destroy(struct drm_dp_mst_topology_mgr *mgr)
 	mutex_unlock(&mgr->payload_lock);
 	mgr->dev = NULL;
 	mgr->aux = NULL;
+
+	{
+		struct drm_dp_mst_topology_mgr_priv_state *pstate;
+
+		pstate = __get_mgr_priv_state(mgr);
+		if (pstate) {
+			spin_lock_irq(&mgr_priv_objs_lock);
+			list_del(&pstate->list);
+			spin_unlock_irq(&mgr_priv_objs_lock);
+			kfree(pstate->state);
+			kfree(pstate);
+		}
+	}
 }
 EXPORT_SYMBOL(drm_dp_mst_topology_mgr_destroy);
 
