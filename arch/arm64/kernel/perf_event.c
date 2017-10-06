@@ -171,7 +171,7 @@
 #define ARMV8_IMPDEF_PERFCTR_L3D_CACHE_INVAL			0xA8
 
 /* ARMv8 Cortex-A53 specific event types. */
-#define ARMV8_A53_PERFCTR_PREFETCH_LINEFILL			0xC2
+#define ARMV8_A53_PERFCTR_PREF_LINEFILL				0xC2
 
 /* ARMv8 Cavium ThunderX specific event types. */
 #define ARMV8_THUNDER_PERFCTR_L1D_CACHE_MISS_ST			0xE9
@@ -264,7 +264,7 @@ static const unsigned armv8_a53_perf_cache_map[PERF_COUNT_HW_CACHE_MAX]
 	[C(L1D)][C(OP_READ)][C(RESULT_MISS)]	= ARMV8_PMUV3_PERFCTR_L1D_CACHE_REFILL,
 	[C(L1D)][C(OP_WRITE)][C(RESULT_ACCESS)]	= ARMV8_PMUV3_PERFCTR_L1D_CACHE,
 	[C(L1D)][C(OP_WRITE)][C(RESULT_MISS)]	= ARMV8_PMUV3_PERFCTR_L1D_CACHE_REFILL,
-	[C(L1D)][C(OP_PREFETCH)][C(RESULT_MISS)] = ARMV8_A53_PERFCTR_PREFETCH_LINEFILL,
+	[C(L1D)][C(OP_PREFETCH)][C(RESULT_MISS)] = ARMV8_A53_PERFCTR_PREF_LINEFILL,
 
 	[C(L1I)][C(OP_READ)][C(RESULT_ACCESS)]	= ARMV8_PMUV3_PERFCTR_L1I_CACHE,
 	[C(L1I)][C(OP_READ)][C(RESULT_MISS)]	= ARMV8_PMUV3_PERFCTR_L1I_CACHE_REFILL,
@@ -369,7 +369,7 @@ armv8pmu_events_sysfs_show(struct device *dev,
 
 	pmu_attr = container_of(attr, struct perf_pmu_events_attr, attr);
 
-	return sprintf(page, "event=0x%02llx\n", pmu_attr->id);
+	return sprintf(page, "event=0x%03llx\n", pmu_attr->id);
 }
 
 #define ARMV8_EVENT_ATTR_RESOLVE(m) #m
@@ -932,36 +932,24 @@ static int armv8_vulcan_map_event(struct perf_event *event)
 				ARMV8_PMU_EVTYPE_EVENT);
 }
 
-static void armv8pmu_read_num_pmnc_events(void *info)
-{
-	int *nb_cnt = info;
-
-	/* Read the nb of CNTx counters supported from PMNC */
-	*nb_cnt = (armv8pmu_pmcr_read() >> ARMV8_PMU_PMCR_N_SHIFT) & ARMV8_PMU_PMCR_N_MASK;
-
-	/* Add the CPU cycles counter */
-	*nb_cnt += 1;
-}
-
-static void armv8pmu_read_common_events_bitmap(unsigned long *bmp)
-{
-	u32 arr[2], reg;
-
-	asm volatile("mrs %0, pmceid0_el0" : "=r" (reg));
-	arr[0] = reg;
-	asm volatile("mrs %0, pmceid1_el0" : "=r" (reg));
-	arr[1] = reg;
-
-	bitmap_from_u32array(bmp, ARMV8_PMUV3_MAX_COMMON_EVENTS,
-			     arr, ARRAY_SIZE(arr));
-}
-
 static void __armv8pmu_probe_pmu(void *info)
 {
 	struct arm_pmu *cpu_pmu = info;
+	u32 pmceid[2];
 
-	armv8pmu_read_num_pmnc_events(&cpu_pmu->num_events);
-	armv8pmu_read_common_events_bitmap(cpu_pmu->pmceid_bitmap);
+	/* Read the nb of CNTx counters supported from PMNC */
+	cpu_pmu->num_events = (armv8pmu_pmcr_read() >> ARMV8_PMU_PMCR_N_SHIFT)
+		& ARMV8_PMU_PMCR_N_MASK;
+
+	/* Add the CPU cycles counter */
+	cpu_pmu->num_events += 1;
+
+	pmceid[0] = read_sysreg(pmceid0_el0);
+	pmceid[1] = read_sysreg(pmceid1_el0);
+
+	bitmap_from_u32array(cpu_pmu->pmceid_bitmap,
+			     ARMV8_PMUV3_MAX_COMMON_EVENTS, pmceid,
+			     ARRAY_SIZE(pmceid));
 }
 
 static int armv8pmu_probe_pmu(struct arm_pmu *cpu_pmu)
