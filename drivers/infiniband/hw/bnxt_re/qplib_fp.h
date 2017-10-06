@@ -408,6 +408,7 @@ struct bnxt_qplib_nq {
 	struct pci_dev			*pdev;
 
 	int				vector;
+	cpumask_t			mask;
 	int				budget;
 	bool				requested;
 	struct tasklet_struct		worker;
@@ -426,6 +427,7 @@ struct bnxt_qplib_nq {
 						 void *srq,
 						 u8 event);
 	struct workqueue_struct         *cqn_wq;
+	char                            name[32];
 };
 
 struct bnxt_qplib_nq_work {
@@ -436,7 +438,7 @@ struct bnxt_qplib_nq_work {
 
 void bnxt_qplib_disable_nq(struct bnxt_qplib_nq *nq);
 int bnxt_qplib_enable_nq(struct pci_dev *pdev, struct bnxt_qplib_nq *nq,
-			 int msix_vector, int bar_reg_offset,
+			 int nq_idx, int msix_vector, int bar_reg_offset,
 			 int (*cqn_handler)(struct bnxt_qplib_nq *nq,
 					    struct bnxt_qplib_cq *cq),
 			 int (*srqn_handler)(struct bnxt_qplib_nq *nq,
