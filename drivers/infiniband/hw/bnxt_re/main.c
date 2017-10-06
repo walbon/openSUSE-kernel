@@ -48,8 +48,6 @@
 #include <net/ipv6.h>
 #include <net/addrconf.h>
 #include <linux/if_ether.h>
-#include <linux/atomic.h>
-#include <asm/barrier.h>
 
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_user_verbs.h>
@@ -998,10 +996,6 @@ static void bnxt_re_ib_unreg(struct bnxt_re_dev *rdev, bool lock_wait)
 	if (test_and_clear_bit(BNXT_RE_FLAG_QOS_WORK_REG, &rdev->flags))
 		cancel_delayed_work(&rdev->worker);
 
-	/* Wait for ULPs to release references */
-	while (atomic_read(&rdev->cq_count))
-		usleep_range(500, 1000);
-
 	bnxt_re_cleanup_res(rdev);
 	bnxt_re_free_res(rdev, lock_wait);
 
@@ -1229,22 +1223,6 @@ static void bnxt_re_remove_one(struct bnxt_re_dev *rdev)
 	pci_dev_put(rdev->en_dev->pdev);
 }
 
-static void bnxt_re_get_link_speed(struct bnxt_re_dev *rdev)
-{
-	struct ethtool_link_ksettings lksettings;
-	struct net_device *netdev = rdev->netdev;
-
-	if (netdev->ethtool_ops && netdev->ethtool_ops->get_link_ksettings) {
-		memset(&lksettings, 0, sizeof(lksettings));
-		if (rtnl_trylock()) {
-			netdev->ethtool_ops->get_link_ksettings(netdev,
-								&lksettings);
-			rdev->espeed = lksettings.base.speed;
-			rtnl_unlock();
-		}
-	}
-}
-
 /* Handle all deferred netevents tasks */
 static void bnxt_re_task(struct work_struct *work)
 {
@@ -1262,10 +1240,6 @@ static void bnxt_re_task(struct work_struct *work)
 	switch (re_work->event) {
 	case NETDEV_REGISTER:
 		rc = bnxt_re_ib_reg(rdev);
-		/* Use memory barrier to sync the rdev->flags */
-		smp_mb();
-		clear_bit(BNXT_RE_FLAG_NETDEV_REG_IN_PROG,
-			  &rdev->flags);
 		if (rc)
 			dev_err(rdev_to_dev(rdev),
 				"Failed to register with IB: %#x", rc);
@@ -1283,11 +1257,12 @@ static void bnxt_re_task(struct work_struct *work)
 		else if (netif_carrier_ok(rdev->netdev))
 			bnxt_re_dispatch_event(&rdev->ibdev, NULL, 1,
 					       IB_EVENT_PORT_ACTIVE);
-		bnxt_re_get_link_speed(rdev);
 		break;
 	default:
 		break;
 	}
+	smp_mb__before_atomic();
+	clear_bit(BNXT_RE_FLAG_TASK_IN_PROG, &rdev->flags);
 	kfree(re_work);
 }
 
@@ -1342,13 +1317,6 @@ static int bnxt_re_netdev_event(struct notifier_block *notifier,
 			break;
 		}
 		bnxt_re_init_one(rdev);
-		/*
-		 *  Query the link speed at the time of registration.
-		 *  Already in rtnl_lock context
-		 */
-		bnxt_re_get_link_speed(rdev);
-
-		set_bit(BNXT_RE_FLAG_NETDEV_REG_IN_PROG, &rdev->flags);
 		sch_work = true;
 		break;
 
@@ -1356,7 +1324,7 @@ static int bnxt_re_netdev_event(struct notifier_block *notifier,
 		/* netdev notifier will call NETDEV_UNREGISTER again later since
 		 * we are still holding the reference to the netdev
 		 */
-		if (test_bit(BNXT_RE_FLAG_NETDEV_REG_IN_PROG, &rdev->flags))
+		if (test_bit(BNXT_RE_FLAG_TASK_IN_PROG, &rdev->flags))
 			goto exit;
 		bnxt_re_ib_unreg(rdev, false);
 		bnxt_re_remove_one(rdev);
@@ -1376,6 +1344,7 @@ static int bnxt_re_netdev_event(struct notifier_block *notifier,
 			re_work->vlan_dev = (real_dev == netdev ?
 					     NULL : netdev);
 			INIT_WORK(&re_work->work, bnxt_re_task);
+			set_bit(BNXT_RE_FLAG_TASK_IN_PROG, &rdev->flags);
 			queue_work(bnxt_re_wq, &re_work->work);
 		}
 	}
