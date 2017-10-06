@@ -49,6 +49,9 @@
 
 #include <asm/irq_regs.h>
 
+void (*kabi_perf_event_mapped)(struct perf_event *event, struct mm_struct *mm);
+void (*kabi_perf_event_unmapped)(struct perf_event *event, struct mm_struct *mm);
+
 static struct workqueue_struct *perf_wq;
 
 typedef int (*remote_function_f)(void *);
@@ -4649,6 +4652,9 @@ static void perf_mmap_open(struct vm_area_struct *vma)
 
 	if (event->pmu->event_mapped)
 		event->pmu->event_mapped(event);
+
+	if (kabi_perf_event_mapped)
+		kabi_perf_event_mapped(event, vma->vm_mm);
 }
 
 /*
@@ -4671,6 +4677,8 @@ static void perf_mmap_close(struct vm_area_struct *vma)
 	if (event->pmu->event_unmapped)
 		event->pmu->event_unmapped(event);
 
+	if (kabi_perf_event_unmapped)
+		kabi_perf_event_unmapped(event, vma->vm_mm);
 	/*
 	 * rb->aux_mmap_count will always drop before rb->mmap_count and
 	 * event->mmap_count, so it is ok to use event->mmap_mutex to
@@ -4956,6 +4964,9 @@ aux_unlock:
 
 	if (event->pmu->event_mapped)
 		event->pmu->event_mapped(event);
+
+	if (kabi_perf_event_mapped)
+		kabi_perf_event_mapped(event, vma->vm_mm);
 
 	return ret;
 }
