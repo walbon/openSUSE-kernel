@@ -2030,8 +2030,8 @@ static void vmx_vcpu_pi_load(struct kvm_vcpu *vcpu, int cpu)
 
 		/* Allow posting non-urgent interrupts */
 		new.sn = 0;
-	} while (cmpxchg(&pi_desc->control, old.control,
-			new.control) != old.control);
+	} while (cmpxchg64(&pi_desc->control, old.control,
+			   new.control) != old.control);
 }
 /*
  * Switches to specified vcpu, until a matching vcpu_put(), but assumes
@@ -10683,8 +10683,8 @@ static int vmx_pre_block(struct kvm_vcpu *vcpu)
 
 		/* set 'NV' to 'wakeup vector' */
 		new.nv = POSTED_INTR_WAKEUP_VECTOR;
-	} while (cmpxchg(&pi_desc->control, old.control,
-			new.control) != old.control);
+	} while (cmpxchg64(&pi_desc->control, old.control,
+			   new.control) != old.control);
 
 	return 0;
 }
@@ -10715,8 +10715,8 @@ static void vmx_post_block(struct kvm_vcpu *vcpu)
 
 		/* set 'NV' to 'notification vector' */
 		new.nv = POSTED_INTR_VECTOR;
-	} while (cmpxchg(&pi_desc->control, old.control,
-			new.control) != old.control);
+	} while (cmpxchg64(&pi_desc->control, old.control,
+			   new.control) != old.control);
 
 	if(vcpu->pre_pcpu != -1) {
 		spin_lock_irqsave(
@@ -10757,8 +10757,8 @@ static int vmx_update_pi_irte(struct kvm *kvm, unsigned int host_irq,
 	irq_rt = srcu_dereference(kvm->irq_routing, &kvm->irq_srcu);
 	if (guest_irq >= irq_rt->nr_rt_entries ||
 	    hlist_empty(&irq_rt->map[guest_irq])) {
-		WARN_ONCE(1, "no route for guest_irq %u/%u (broken user space?)\n",
-			  guest_irq, irq_rt->nr_rt_entries);
+		pr_warn_once("no route for guest_irq %u/%u (broken user space?)\n",
+			     guest_irq, irq_rt->nr_rt_entries);
 		goto out;
 	}
 
