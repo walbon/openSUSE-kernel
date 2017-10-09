@@ -18,6 +18,66 @@
 #include <asm/cputype.h>
 
 /*
+ * Temporary build fixes
+ */
+static inline int irq_get_percpu_devid_partition(unsigned int irq,
+		struct cpumask *affinity)
+{
+	return -ENOTSUPP;
+}
+
+static inline int cpuhp_setup_state_multi(enum cpuhp_state state,
+					  const char *name,
+					  int (*startup)(unsigned int cpu,
+							 struct hlist_node *node),
+					  int (*teardown)(unsigned int cpu,
+							  struct hlist_node *node))
+{
+	return -ENOTSUPP;
+}
+
+static inline int cpuhp_setup_state_nocalls(enum cpuhp_state state,
+					    const char *name,
+					    int (*startup)(unsigned int cpu),
+					    int (*teardown)(unsigned int cpu))
+{
+	return -ENOTSUPP;
+}
+
+static inline int cpuhp_setup_state(enum cpuhp_state state,
+				    const char *name,
+				    int (*startup)(unsigned int cpu),
+				    int (*teardown)(unsigned int cpu))
+{
+	return -ENOTSUPP;
+}
+
+static inline void cpuhp_remove_state(enum cpuhp_state state) { }
+
+static inline void cpuhp_remove_state_nocalls(enum cpuhp_state state) { }
+
+static inline int cpuhp_state_remove_instance_nocalls(enum cpuhp_state state,
+						      struct hlist_node *node)
+{
+	return -ENOTSUPP;
+}
+
+static inline int cpuhp_state_add_instance(enum cpuhp_state state,
+					   struct hlist_node *node)
+{
+	return -ENOTSUPP;
+}
+
+static inline int cpuhp_state_add_instance_nocalls(enum cpuhp_state state,
+						   struct hlist_node *node)
+{
+	return -ENOTSUPP;
+}
+
+#define CPUHP_AP_PERF_ARM_STARTING 0
+#define CPUHP_AP_PERF_ARM_ACPI_STARTING 1
+
+/*
  * struct arm_pmu_platdata - ARM PMU platform data
  *
  * @handle_irq: an optional handler which will be called from the
