@@ -43,12 +43,14 @@ static int probe_current_pmu(struct arm_pmu *pmu,
 
 static int pmu_parse_percpu_irq(struct arm_pmu *pmu, int irq)
 {
-	int cpu, ret;
+	int cpu;
 	struct pmu_hw_events __percpu *hw_events = pmu->hw_events;
 
-	ret = irq_get_percpu_devid_partition(irq, &pmu->supported_cpus);
-	if (ret)
-		return ret;
+	/*
+	 * Replace irq_get_percpu_devid_partition since partitionned percpu
+	 * interrupts are not supported
+	 */
+	cpumask_setall(&pmu->supported_cpus);
 
 	for_each_cpu(cpu, &pmu->supported_cpus)
 		per_cpu(hw_events->irq, cpu) = irq;
