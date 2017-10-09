@@ -666,6 +666,24 @@ static int arm_perf_teardown_cpu(unsigned int cpu, struct hlist_node *node)
 	return 0;
 }
 
+static int cpu_pmu_notify(struct notifier_block *b, unsigned long action,
+			  void *hcpu)
+{
+	int cpu = (unsigned long)hcpu;
+	struct arm_pmu *pmu = container_of(b, struct arm_pmu, hotplug_nb);
+	int ret = NOTIFY_DONE;
+
+	if ((action & ~CPU_TASKS_FROZEN) == CPU_STARTING) {
+		arm_perf_starting_cpu(cpu, &pmu->node);
+		ret = NOTIFY_OK;
+	} else if ((action & ~CPU_TASKS_FROZEN) == CPU_DYING) {
+		arm_perf_teardown_cpu(cpu, &pmu->node);
+		ret = NOTIFY_OK;
+	}
+
+	return ret;
+}
+
 #ifdef CONFIG_CPU_PM
 static void cpu_pm_pmu_setup(struct arm_pmu *armpmu, unsigned long cmd)
 {
@@ -764,12 +782,49 @@ static inline int cpu_pm_pmu_register(struct arm_pmu *cpu_pmu) { return 0; }
 static inline void cpu_pm_pmu_unregister(struct arm_pmu *cpu_pmu) { }
 #endif
 
+/* Must run on target cpu */
+static void cpu_pmu_init_notify_callback(void *ptr)
+{
+	struct arm_pmu *cpu_pmu = (struct arm_pmu *)ptr;
+
+	arm_perf_starting_cpu(smp_processor_id(), &cpu_pmu->node);
+}
+
+static void cpu_pmu_init_notify(struct arm_pmu *cpu_pmu)
+{
+	long cpu;
+
+	preempt_disable();
+
+	/* Handle current cpu direclty */
+	arm_perf_starting_cpu(smp_processor_id(), &cpu_pmu->node);
+
+	for_each_online_cpu(cpu) {
+		if (cpu == smp_processor_id())
+			continue;
+		if (cpumask_test_cpu(cpu, &cpu_pmu->supported_cpus))
+			smp_call_function_single(cpu,
+				cpu_pmu_init_notify_callback,
+				(void *) cpu_pmu,
+				true);
+	}
+	preempt_enable();
+}
+
 static int cpu_pmu_init(struct arm_pmu *cpu_pmu)
 {
 	int err;
 
-	err = cpuhp_state_add_instance(CPUHP_AP_PERF_ARM_STARTING,
-				       &cpu_pmu->node);
+	/*
+	 * Cpu hotplug statemachine calls the notifier as soon as they are
+	 * registered and for the cpus above the requested state. Since
+	 * cpu hotplug notifiers dont work like this, call the notifiers on
+	 * all online cpus here.
+	 */
+	cpu_pmu_init_notify(cpu_pmu);
+
+	cpu_pmu->hotplug_nb.notifier_call = cpu_pmu_notify;
+	err = register_cpu_notifier(&cpu_pmu->hotplug_nb);
 	if (err)
 		goto out;
 
@@ -780,8 +835,7 @@ static int cpu_pmu_init(struct arm_pmu *cpu_pmu)
 	return 0;
 
 out_unregister:
-	cpuhp_state_remove_instance_nocalls(CPUHP_AP_PERF_ARM_STARTING,
-					    &cpu_pmu->node);
+	unregister_cpu_notifier(&cpu_pmu->hotplug_nb);
 out:
 	return err;
 }
@@ -789,8 +843,7 @@ out:
 static void cpu_pmu_destroy(struct arm_pmu *cpu_pmu)
 {
 	cpu_pm_pmu_unregister(cpu_pmu);
-	cpuhp_state_remove_instance_nocalls(CPUHP_AP_PERF_ARM_STARTING,
-					    &cpu_pmu->node);
+	unregister_cpu_notifier(&cpu_pmu->hotplug_nb);
 }
 
 struct arm_pmu *armpmu_alloc(void)
@@ -883,18 +936,3 @@ out_destroy:
 	cpu_pmu_destroy(pmu);
 	return ret;
 }
-
-static int arm_pmu_hp_init(void)
-{
-	int ret;
-
-	ret = cpuhp_setup_state_multi(CPUHP_AP_PERF_ARM_STARTING,
-				      "AP_PERF_ARM_STARTING",
-				      arm_perf_starting_cpu,
-				      arm_perf_teardown_cpu);
-	if (ret)
-		pr_err("CPU hotplug notifier for ARM PMU could not be registered: %d\n",
-		       ret);
-	return ret;
-}
-subsys_initcall(arm_pmu_hp_init);
