@@ -221,38 +221,6 @@ int bnxt_re_modify_device(struct ib_device *ibdev,
 	return 0;
 }
 
-static void __to_ib_speed_width(u32 espeed, u8 *speed, u8 *width)
-{
-	switch (espeed) {
-	case SPEED_1000:
-		*speed = IB_SPEED_SDR;
-		*width = IB_WIDTH_1X;
-		break;
-	case SPEED_10000:
-		*speed = IB_SPEED_QDR;
-		*width = IB_WIDTH_1X;
-		break;
-	case SPEED_20000:
-		*speed = IB_SPEED_DDR;
-		*width = IB_WIDTH_4X;
-		break;
-	case SPEED_25000:
-		*speed = IB_SPEED_EDR;
-		*width = IB_WIDTH_1X;
-		break;
-	case SPEED_40000:
-		*speed = IB_SPEED_QDR;
-		*width = IB_WIDTH_4X;
-		break;
-	case SPEED_50000:
-		break;
-	default:
-		*speed = IB_SPEED_SDR;
-		*width = IB_WIDTH_1X;
-		break;
-	}
-}
-
 /* Port */
 int bnxt_re_query_port(struct ib_device *ibdev, u8 port_num,
 		       struct ib_port_attr *port_attr)
@@ -289,10 +257,9 @@ int bnxt_re_query_port(struct ib_device *ibdev, u8 port_num,
 	port_attr->sm_sl = 0;
 	port_attr->subnet_timeout = 0;
 	port_attr->init_type_reply = 0;
+	port_attr->active_speed = rdev->active_speed;
+	port_attr->active_width = rdev->active_width;
 
-	if (test_bit(BNXT_RE_FLAG_IBDEV_REGISTERED, &rdev->flags))
-		__to_ib_speed_width(rdev->espeed, &port_attr->active_speed,
-				    &port_attr->active_width);
 	return 0;
 }
 
@@ -362,6 +329,7 @@ int bnxt_re_del_gid(struct ib_device *ibdev, u8 port_num,
 	struct bnxt_re_gid_ctx *ctx, **ctx_tbl;
 	struct bnxt_re_dev *rdev = to_bnxt_re_dev(ibdev, ibdev);
 	struct bnxt_qplib_sgid_tbl *sgid_tbl = &rdev->qplib_res.sgid_tbl;
+	struct bnxt_qplib_gid *gid_to_del;
 
 	/* Delete the entry from the hardware */
 	ctx = *context;
@@ -371,11 +339,25 @@ int bnxt_re_del_gid(struct ib_device *ibdev, u8 port_num,
 	if (sgid_tbl && sgid_tbl->active) {
 		if (ctx->idx >= sgid_tbl->max)
 			return -EINVAL;
+		gid_to_del = &sgid_tbl->tbl[ctx->idx];
+		/* DEL_GID is called in WQ context(netdevice_event_work_handler)
+		 * or via the ib_unregister_device path. In the former case QP1
+		 * may not be destroyed yet, in which case just return as FW
+		 * needs that entry to be present and will fail it's deletion.
+		 * We could get invoked again after QP1 is destroyed OR get an
+		 * ADD_GID call with a different GID value for the same index
+		 * where we issue MODIFY_GID cmd to update the GID entry -- TBD
+		 */
+		if (ctx->idx == 0 &&
+		    rdma_link_local_addr((struct in6_addr *)gid_to_del) &&
+		    ctx->refcnt == 1 && rdev->qp1_sqp) {
+			dev_dbg(rdev_to_dev(rdev),
+				"Trying to delete GID0 while QP1 is alive\n");
+			return -EFAULT;
+		}
 		ctx->refcnt--;
 		if (!ctx->refcnt) {
-			rc = bnxt_qplib_del_sgid(sgid_tbl,
-						 &sgid_tbl->tbl[ctx->idx],
-						 true);
+			rc = bnxt_qplib_del_sgid(sgid_tbl, gid_to_del, true);
 			if (rc) {
 				dev_err(rdev_to_dev(rdev),
 					"Failed to remove GID: %#x", rc);
@@ -858,6 +840,8 @@ int bnxt_re_destroy_qp(struct ib_qp *ib_qp)
 
 		kfree(rdev->sqp_ah);
 		kfree(rdev->qp1_sqp);
+		rdev->qp1_sqp = NULL;
+		rdev->sqp_ah = NULL;
 	}
 
 	if (qp->rumem && !IS_ERR(qp->rumem))
@@ -1479,11 +1463,14 @@ int bnxt_re_modify_qp(struct ib_qp *ib_qp, struct ib_qp_attr *qp_attr,
 		qp->qplib_qp.modify_flags |=
 				CMDQ_MODIFY_QP_MODIFY_MASK_PATH_MTU;
 		qp->qplib_qp.path_mtu = __from_ib_mtu(qp_attr->path_mtu);
+		qp->qplib_qp.mtu = ib_mtu_enum_to_int(qp_attr->path_mtu);
 	} else if (qp_attr->qp_state == IB_QPS_RTR) {
 		qp->qplib_qp.modify_flags |=
 			CMDQ_MODIFY_QP_MODIFY_MASK_PATH_MTU;
 		qp->qplib_qp.path_mtu =
 			__from_ib_mtu(iboe_get_mtu(rdev->netdev->mtu));
+		qp->qplib_qp.mtu =
+			ib_mtu_enum_to_int(iboe_get_mtu(rdev->netdev->mtu));
 	}
 
 	if (qp_attr_mask & IB_QP_TIMEOUT) {
@@ -1951,6 +1938,7 @@ static int bnxt_re_build_atomic_wqe(struct ib_send_wr *wr,
 	switch (wr->opcode) {
 	case IB_WR_ATOMIC_CMP_AND_SWP:
 		wqe->type = BNXT_QPLIB_SWQE_TYPE_ATOMIC_CMP_AND_SWP;
+		wqe->atomic.cmp_data = atomic_wr(wr)->compare_add;
 		wqe->atomic.swap_data = atomic_wr(wr)->swap;
 		break;
 	case IB_WR_ATOMIC_FETCH_AND_ADD:
@@ -3099,7 +3087,7 @@ int bnxt_re_dereg_mr(struct ib_mr *ib_mr)
 		return rc;
 	}
 
-	if (mr->npages && mr->pages) {
+	if (mr->pages) {
 		rc = bnxt_qplib_free_fast_reg_page_list(&rdev->qplib_res,
 							&mr->qplib_frpl);
 		kfree(mr->pages);
