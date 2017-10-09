@@ -490,13 +490,14 @@ static void __check_cap_issue(struct ceph_inode_info *ci, struct ceph_cap *cap,
 	}
 
 	/*
-	 * if we are newly issued FILE_SHARED, mark dir not complete; we
-	 * don't know what happened to this directory while we didn't
-	 * have the cap.
+	 * If FILE_SHARED is newly issued, mark dir not complete. We don't
+	 * know what happened to this directory while we didn't have the cap.
+	 * If FILE_SHARED is being revoked, also mark dir not complete. It
+	 * stops on-going cached readdir.
 	 */
-	if ((issued & CEPH_CAP_FILE_SHARED) &&
-	    (had & CEPH_CAP_FILE_SHARED) == 0) {
-		ci->i_shared_gen++;
+	if ((issued & CEPH_CAP_FILE_SHARED) != (had & CEPH_CAP_FILE_SHARED)) {
+		if (issued & CEPH_CAP_FILE_SHARED)
+			ci->i_shared_gen++;
 		if (S_ISDIR(ci->vfs_inode.i_mode)) {
 			dout(" marking %p NOT complete\n", &ci->vfs_inode);
 			__ceph_dir_clear_complete(ci);
@@ -1460,7 +1461,7 @@ out:
 
 	if (psession) {
 		*psession = session;
-	} else {
+	} else if (session) {
 		mutex_unlock(&session->s_mutex);
 		ceph_put_mds_session(session);
 	}
@@ -3422,7 +3423,7 @@ retry:
 	tcap = __get_cap_for_mds(ci, target);
 	if (tcap) {
 		/* already have caps from the target */
-		if (tcap->cap_id != t_cap_id ||
+		if (tcap->cap_id == t_cap_id &&
 		    ceph_seq_cmp(tcap->seq, t_seq) < 0) {
 			dout(" updating import cap %p mds%d\n", tcap, target);
 			tcap->cap_id = t_cap_id;
