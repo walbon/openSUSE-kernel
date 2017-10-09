@@ -188,6 +188,13 @@ static int arm_pmu_acpi_cpu_starting(unsigned int cpu)
 	return 0;
 }
 
+static void arm_pmu_acpi_notify(void *hcpu)
+{
+	int cpu = (unsigned long)hcpu;
+
+	arm_pmu_acpi_cpu_starting(cpu);
+}
+
 int arm_pmu_acpi_probe(armpmu_init_fn init_fn)
 {
 	int pmu_idx = 0;
@@ -246,6 +253,7 @@ int arm_pmu_acpi_probe(armpmu_init_fn init_fn)
 static int arm_pmu_acpi_init(void)
 {
 	int ret;
+	unsigned long cpu;
 
 	if (acpi_disabled)
 		return 0;
@@ -259,9 +267,17 @@ static int arm_pmu_acpi_init(void)
 	if (ret)
 		return ret;
 
-	ret = cpuhp_setup_state(CPUHP_AP_PERF_ARM_ACPI_STARTING,
-				"perf/arm/pmu_acpi:starting",
-				arm_pmu_acpi_cpu_starting, NULL);
+	preempt_disable();
+	/* Handle current cpu direclty */
+	arm_pmu_acpi_cpu_starting(smp_processor_id());
+
+	for_each_online_cpu(cpu) {
+		if (cpu == smp_processor_id())
+			continue;
+		smp_call_function_single(
+				cpu, arm_pmu_acpi_notify, (void *) cpu, true);
+	}
+	preempt_enable();
 
 	return ret;
 }
