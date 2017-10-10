@@ -638,9 +638,6 @@ struct mlx5_priv {
 	struct list_head        ctx_list;
 	spinlock_t              ctx_lock;
 
-	struct list_head	waiting_events_list;
-	bool			is_accum_events;
-
 	struct mlx5_flow_steering *steering;
 	struct mlx5_eswitch     *eswitch;
 	struct mlx5_core_sriov	sriov;
@@ -660,6 +657,10 @@ struct mlx5_priv {
 #endif
 	struct mlx5_bfreg_data		bfregs;
 	struct mlx5_uars_page	       *uar;
+#ifndef __GENKSYMS__
+	struct list_head	waiting_events_list;
+	bool			is_accum_events;
+#endif
 };
 
 enum mlx5_device_state {
