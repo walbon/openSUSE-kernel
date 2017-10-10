@@ -51,7 +51,9 @@ enum fs_flow_table_type {
 	FS_FT_FDB             = 0X4,
 	FS_FT_SNIFFER_RX	= 0X5,
 	FS_FT_SNIFFER_TX	= 0X6,
+#ifndef __GENKSYMS__
 	FS_FT_MAX_TYPE = FS_FT_SNIFFER_TX,
+#endif
 };
 
 enum fs_flow_table_op_mod {
