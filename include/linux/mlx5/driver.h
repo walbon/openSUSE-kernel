@@ -657,6 +657,10 @@ struct mlx5_priv {
 #endif
 	struct mlx5_bfreg_data		bfregs;
 	struct mlx5_uars_page	       *uar;
+#ifndef __GENKSYMS__
+	struct list_head	waiting_events_list;
+	bool			is_accum_events;
+#endif
 };
 
 enum mlx5_device_state {
@@ -665,9 +669,7 @@ enum mlx5_device_state {
 };
 
 enum mlx5_interface_state {
-	MLX5_INTERFACE_STATE_DOWN = BIT(0),
-	MLX5_INTERFACE_STATE_UP = BIT(1),
-	MLX5_INTERFACE_STATE_SHUTDOWN = BIT(2),
+	MLX5_INTERFACE_STATE_UP = BIT(0),
 };
 
 enum mlx5_pci_status {

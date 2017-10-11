@@ -235,13 +235,13 @@ static inline int mlx5e_page_alloc_mapped(struct mlx5e_rq *rq,
 	if (unlikely(!page))
 		return -ENOMEM;
 
-	dma_info->page = page;
 	dma_info->addr = dma_map_page(rq->pdev, page, 0,
 				      RQ_PAGE_SIZE(rq), DMA_FROM_DEVICE);
 	if (unlikely(dma_mapping_error(rq->pdev, dma_info->addr))) {
 		put_page(page);
 		return -ENOMEM;
 	}
+	dma_info->page = page;
 
 	return 0;
 }
@@ -563,6 +563,7 @@ static inline void mlx5e_handle_csum(struct net_device *netdev,
 
 	if (lro) {
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
+		rq->stats.csum_unnecessary++;
 		return;
 	}
 
@@ -580,7 +581,9 @@ static inline void mlx5e_handle_csum(struct net_device *netdev,
 			skb->csum_level = 1;
 			skb->encapsulation = 1;
 			rq->stats.csum_unnecessary_inner++;
+			return;
 		}
+		rq->stats.csum_unnecessary++;
 		return;
 	}
 csum_none:
