@@ -53,12 +53,19 @@ struct sdio_func {
 	unsigned int		state;		/* function state */
 #define SDIO_STATE_PRESENT	(1<<0)		/* present in sysfs */
 
+#ifdef __GENKSYMS__
 	u8			tmpbuf[4];	/* DMA:able scratch buffer */
+#else
+	u8			kabi_ph[4];	/* kabi placeholder */
+#endif
 
 	unsigned		num_info;	/* number of info strings */
 	const char		**info;		/* info strings */
 
 	struct sdio_func_tuple *tuples;
+#ifndef __GENKSYMS__
+	u8			*tmpbuf;	/* DMA:able scratch buffer */
+#endif
 };
 
 #define sdio_func_present(f)	((f)->state & SDIO_STATE_PRESENT)
