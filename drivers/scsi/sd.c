@@ -646,24 +646,11 @@ static void sd_config_discard(struct scsi_disk *sdkp, unsigned int mode)
 
 	q->limits.discard_zeroes_data = 0;
 
-	/*
-	 * When LBPRZ is reported, discard alignment and granularity
-	 * must be fixed to the logical block size. Otherwise the block
-	 * layer will drop misaligned portions of the request which can
-	 * lead to data corruption. If LBPRZ is not set, we honor the
-	 * device preference.
-	 */
-	if (sdkp->lbprz) {
-		q->limits.discard_alignment = 0;
-		q->limits.discard_granularity = logical_block_size;
-	} else {
-		q->limits.discard_alignment = sdkp->unmap_alignment *
-			logical_block_size;
-		q->limits.discard_granularity =
-			max(sdkp->physical_block_size,
-			    sdkp->unmap_granularity * logical_block_size);
-	}
-
+	q->limits.discard_alignment =
+		sdkp->unmap_alignment * logical_block_size;
+	q->limits.discard_granularity =
+		max(sdkp->physical_block_size,
+		    sdkp->unmap_granularity * logical_block_size);
 	sdkp->provisioning_mode = mode;
 
 	switch (mode) {
@@ -2805,7 +2792,7 @@ static void sd_read_block_limits(struct scsi_disk *sdkp)
 				sd_config_discard(sdkp, SD_LBP_WS16);
 
 		} else {	/* LBP VPD page tells us what to use */
-			if (sdkp->lbpu && sdkp->max_unmap_blocks && !sdkp->lbprz)
+			if (sdkp->lbpu && sdkp->max_unmap_blocks)
 				sd_config_discard(sdkp, SD_LBP_UNMAP);
 			else if (sdkp->lbpws)
 				sd_config_discard(sdkp, SD_LBP_WS16);
@@ -2974,8 +2961,6 @@ static int sd_revalidate_disk(struct gendisk *disk)
 		sd_read_write_same(sdkp, buffer);
 	}
 
-	sdkp->first_scan = 0;
-
 	/*
 	 * We now have all cache related info, determine how we deal
 	 * with flush requests.
@@ -2990,7 +2975,7 @@ static int sd_revalidate_disk(struct gendisk *disk)
 	q->limits.max_dev_sectors = logical_to_sectors(sdp, dev_max);
 
 	/*
-	 * Use the device's preferred I/O size for reads and writes
+	 * Determine the device's preferred I/O size for reads and writes
 	 * unless the reported value is unreasonably small, large, or
 	 * garbage.
 	 */
@@ -3004,8 +2989,19 @@ static int sd_revalidate_disk(struct gendisk *disk)
 		rw_max = min_not_zero(logical_to_sectors(sdp, dev_max),
 				      (sector_t)BLK_DEF_MAX_SECTORS);
 
-	/* Combine with controller limits */
-	q->limits.max_sectors = min(rw_max, queue_max_hw_sectors(q));
+	/* Do not exceed controller limit */
+	rw_max = min(rw_max, queue_max_hw_sectors(q));
+
+	/*
+	 * Only update max_sectors if previously unset or if the current value
+	 * exceeds the capabilities of the hardware.
+	 */
+	if (sdkp->first_scan ||
+	    q->limits.max_sectors > q->limits.max_dev_sectors ||
+	    q->limits.max_sectors > q->limits.max_hw_sectors)
+		q->limits.max_sectors = rw_max;
+
+	sdkp->first_scan = 0;
 
 	set_capacity(disk, logical_to_sectors(sdp, sdkp->capacity));
 	sd_config_write_same(sdkp);
