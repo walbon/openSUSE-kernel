@@ -200,6 +200,7 @@ struct eventpoll {
 
 	/* RB tree root used to store monitored fd structs */
 	struct rb_root rbr;
+	struct rb_node *rb_leftmost;
 
 	/*
 	 * This is a single linked list that chains all the "struct epitem" that
@@ -714,6 +715,13 @@ static int ep_remove(struct eventpoll *ep, struct epitem *epi)
 	list_del_rcu(&epi->fllink);
 	spin_unlock(&file->f_lock);
 
+	if (ep->rb_leftmost == &epi->rbn) {
+		struct rb_node *next_node;
+
+		next_node = rb_next(&epi->rbn);
+		ep->rb_leftmost = next_node;
+	}
+
 	rb_erase(&epi->rbn, &ep->rbr);
 
 	spin_lock_irqsave(&ep->lock, flags);
@@ -758,7 +766,7 @@ static void ep_free(struct eventpoll *ep)
 	/*
 	 * Walks through the whole tree by unregistering poll callbacks.
 	 */
-	for (rbp = rb_first(&ep->rbr); rbp; rbp = rb_next(rbp)) {
+	for (rbp = ep->rb_leftmost; rbp; rbp = rb_next(rbp)) {
 		epi = rb_entry(rbp, struct epitem, rbn);
 
 		ep_unregister_pollwait(ep, epi);
@@ -774,7 +782,7 @@ static void ep_free(struct eventpoll *ep)
 	 * a lockdep warning.
 	 */
 	mutex_lock(&ep->mtx);
-	while ((rbp = rb_first(&ep->rbr)) != NULL) {
+	while ((rbp = ep->rb_leftmost) != NULL) {
 		epi = rb_entry(rbp, struct epitem, rbn);
 		ep_remove(ep, epi);
 		cond_resched();
@@ -881,7 +889,7 @@ static void ep_show_fdinfo(struct seq_file *m, struct file *f)
 	struct rb_node *rbp;
 
 	mutex_lock(&ep->mtx);
-	for (rbp = rb_first(&ep->rbr); rbp; rbp = rb_next(rbp)) {
+	for (rbp = ep->rb_leftmost; rbp; rbp = rb_next(rbp)) {
 		struct epitem *epi = rb_entry(rbp, struct epitem, rbn);
 
 		seq_printf(m, "tfd: %8d events: %8x data: %16llx\n",
@@ -955,6 +963,7 @@ static int ep_alloc(struct eventpoll **pep)
 	init_waitqueue_head(&ep->poll_wait);
 	INIT_LIST_HEAD(&ep->rdllist);
 	ep->rbr = RB_ROOT;
+	ep->rb_leftmost = NULL;
 	ep->ovflist = EP_UNACTIVE_PTR;
 	ep->user = user;
 
@@ -1120,16 +1129,22 @@ static void ep_rbtree_insert(struct eventpoll *ep, struct epitem *epi)
 	int kcmp;
 	struct rb_node **p = &ep->rbr.rb_node, *parent = NULL;
 	struct epitem *epic;
+	bool leftmost = true;
 
 	while (*p) {
 		parent = *p;
 		epic = rb_entry(parent, struct epitem, rbn);
 		kcmp = ep_cmp_ffd(&epi->ffd, &epic->ffd);
-		if (kcmp > 0)
+		if (kcmp > 0) {
 			p = &parent->rb_right;
-		else
+			leftmost = false;
+		} else
 			p = &parent->rb_left;
 	}
+
+	if (leftmost)
+		ep->rb_leftmost = &epi->rbn;
+
 	rb_link_node(&epi->rbn, parent, p);
 	rb_insert_color(&epi->rbn, &ep->rbr);
 }
@@ -1371,6 +1386,13 @@ error_remove_epi:
 	spin_lock(&tfile->f_lock);
 	list_del_rcu(&epi->fllink);
 	spin_unlock(&tfile->f_lock);
+
+	if (ep->rb_leftmost == &epi->rbn) {
+		struct rb_node *next_node;
+
+		next_node = rb_next(&epi->rbn);
+		ep->rb_leftmost = next_node;
+	}
 
 	rb_erase(&epi->rbn, &ep->rbr);
 
@@ -1699,7 +1721,7 @@ static int ep_loop_check_proc(void *priv, void *cookie, int call_nests)
 	mutex_lock_nested(&ep->mtx, call_nests + 1);
 	ep->visited = 1;
 	list_add(&ep->visited_list_link, &visited_list);
-	for (rbp = rb_first(&ep->rbr); rbp; rbp = rb_next(rbp)) {
+	for (rbp = ep->rb_leftmost; rbp; rbp = rb_next(rbp)) {
 		epi = rb_entry(rbp, struct epitem, rbn);
 		if (unlikely(is_file_epoll(epi->ffd.file))) {
 			ep_tovisit = epi->ffd.file->private_data;
