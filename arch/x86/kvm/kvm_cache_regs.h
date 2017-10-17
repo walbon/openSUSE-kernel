@@ -92,8 +92,8 @@ static inline u32 kvm_read_pkru(struct kvm_vcpu *vcpu)
 /* kABI hack */
 static inline void kvm_write_pkru(struct kvm_vcpu *vcpu, u32 pkru)
 {
-	if (kvm_set_pkru)
-		kvm_set_pkru(vcpu, pkru);
+	if (kvm_x86_ops->set_pkru)
+		kvm_x86_ops->set_pkru(vcpu, pkru);
 }
 
 static inline void enter_guest_mode(struct kvm_vcpu *vcpu)
