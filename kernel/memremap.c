@@ -290,7 +290,7 @@ void *devm_memremap_pages(struct device *dev, struct resource *res,
 	struct dev_pagemap *pgmap;
 	struct page_map *page_map;
 	unsigned long pfn;
-	int error, nid;
+	int error, nid, i = 0;
 
 	if (is_ram == REGION_MIXED) {
 		WARN_ONCE(1, "%s attempted on mixed region %pr\n",
@@ -379,6 +379,8 @@ void *devm_memremap_pages(struct device *dev, struct resource *res,
 		/* ZONE_DEVICE pages must never appear on a slab lru */
 		list_force_poison(&page->lru);
 		page->pgmap = pgmap;
+		if (!(++i % 1024))
+			cond_resched();
 	}
 	devres_add(dev, page_map);
 	return __va(res->start);
