@@ -76,7 +76,7 @@ struct nvmet_sq {
 	struct completion	free_done;
 	struct completion	confirm_done;
 #ifndef __GENKSYMS__
-	u16			sqhd;
+	u32			sqhd;
 #endif
 };
 
