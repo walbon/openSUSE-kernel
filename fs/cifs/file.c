@@ -2684,12 +2684,12 @@ cifs_writev(struct kiocb *iocb, struct iov_iter *from)
 	struct TCP_Server_Info *server = tlink_tcon(cfile->tlink)->ses->server;
 	ssize_t rc;
 
+	mutex_lock(&inode->i_mutex);
 	/*
 	 * We need to hold the sem to be sure nobody modifies lock list
 	 * with a brlock that prevents writing.
 	 */
 	down_read(&cinode->lock_sem);
-	mutex_lock(&inode->i_mutex);
 
 	rc = generic_write_checks(iocb, from);
 	if (rc <= 0)
@@ -2702,11 +2702,11 @@ cifs_writev(struct kiocb *iocb, struct iov_iter *from)
 	else
 		rc = -EACCES;
 out:
+	up_read(&cinode->lock_sem);
 	mutex_unlock(&inode->i_mutex);
 
 	if (rc > 0)
 		rc = generic_write_sync(iocb, rc);
-	up_read(&cinode->lock_sem);
 	return rc;
 }
 
