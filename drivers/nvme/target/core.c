@@ -845,6 +845,23 @@ out:
 	return status;
 }
 
+static void nvmet_ctrl_free_work(struct work_struct *work)
+{
+	struct nvmet_ctrl *ctrl =
+			container_of(work, struct nvmet_ctrl, free_work);
+	struct nvmet_subsys *subsys = ctrl->subsys;
+
+	flush_work(&ctrl->async_event_work);
+	flush_work(&ctrl->fatal_err_work);
+
+	ida_simple_remove(&cntlid_ida, ctrl->cntlid);
+	nvmet_subsys_put(subsys);
+
+	kfree(ctrl->sqs);
+	kfree(ctrl->cqs);
+	kfree(ctrl);
+}
+
 static void nvmet_ctrl_free(struct kref *ref)
 {
 	struct nvmet_ctrl *ctrl = container_of(ref, struct nvmet_ctrl, ref);
@@ -856,15 +873,8 @@ static void nvmet_ctrl_free(struct kref *ref)
 	list_del(&ctrl->subsys_entry);
 	mutex_unlock(&subsys->lock);
 
-	flush_work(&ctrl->async_event_work);
-	cancel_work_sync(&ctrl->fatal_err_work);
-
-	ida_simple_remove(&cntlid_ida, ctrl->cntlid);
-	nvmet_subsys_put(subsys);
-
-	kfree(ctrl->sqs);
-	kfree(ctrl->cqs);
-	kfree(ctrl);
+	INIT_WORK(&ctrl->free_work, nvmet_ctrl_free_work);
+	schedule_work(&ctrl->free_work);
 }
 
 void nvmet_ctrl_put(struct nvmet_ctrl *ctrl)

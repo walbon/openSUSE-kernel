@@ -130,6 +130,7 @@ struct nvmet_ctrl {
 	struct kref		ref;
 	struct delayed_work	ka_work;
 	struct work_struct	fatal_err_work;
+	struct work_struct	free_work;
 
 	struct nvmet_fabrics_ops *ops;
 
