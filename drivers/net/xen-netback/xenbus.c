@@ -768,7 +768,7 @@ static void connect(struct backend_info *be)
 		requested_num_queues = 1; /* Fall back to single queue */
 	} else if (requested_num_queues > xenvif_max_queues) {
 		/* buggy or malicious guest */
-		xenbus_dev_fatal(dev, err,
+		xenbus_dev_fatal(dev, -EINVAL,
 				 "guest requested %u queues, exceeding the maximum of %u.",
 				 requested_num_queues, xenvif_max_queues);
 		return;
