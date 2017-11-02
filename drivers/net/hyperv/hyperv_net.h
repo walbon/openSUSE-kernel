@@ -775,8 +775,8 @@ struct netvsc_device {
 
 	u32 max_chn;
 	u32 num_chn;
-	spinlock_t sc_lock; /* Protects num_sc_offered variable */
-	u32 num_sc_offered;
+
+	atomic_t sc_offered;
 
 	struct rndis_device *extension;
 

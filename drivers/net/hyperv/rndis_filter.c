@@ -1021,7 +1021,6 @@ static void netvsc_sc_open(struct vmbus_channel *new_sc)
 	struct netvsc_device *nvscdev;
 	u16 chn_index = new_sc->offermsg.offer.sub_channel_index;
 	struct netvsc_channel *nvchan;
-	unsigned long flags;
 	int ret;
 
 	/* This is safe because this callback only happens when
@@ -1051,10 +1050,7 @@ static void netvsc_sc_open(struct vmbus_channel *new_sc)
 	else
 		netif_napi_del(&nvchan->napi);
 
-	spin_lock_irqsave(&nvscdev->sc_lock, flags);
-	nvscdev->num_sc_offered--;
-	spin_unlock_irqrestore(&nvscdev->sc_lock, flags);
-	if (nvscdev->num_sc_offered == 0)
+	if (atomic_dec_and_test(&nvscdev->sc_offered))
 		complete(&nvscdev->channel_init_wait);
 }
 
@@ -1071,12 +1067,9 @@ struct netvsc_device *rndis_filter_device_add(struct hv_device *dev,
 	struct ndis_recv_scale_cap rsscap;
 	u32 rsscap_size = sizeof(struct ndis_recv_scale_cap);
 	unsigned int gso_max_size = GSO_MAX_SIZE;
-	u32 mtu, size;
-	u32 num_rss_qs;
-	u32 sc_delta;
+	u32 mtu, size, num_rss_qs;
 	const struct cpumask *node_cpu_mask;
 	u32 num_possible_rss_qs;
-	unsigned long flags;
 	int i, ret;
 
 	rndis_device = get_rndis_device();
@@ -1098,7 +1091,7 @@ struct netvsc_device *rndis_filter_device_add(struct hv_device *dev,
 	net_device->max_chn = 1;
 	net_device->num_chn = 1;
 
-	spin_lock_init(&net_device->sc_lock);
+	atomic_set(&net_device->sc_offered, 0);
 
 	net_device->extension = rndis_device;
 	rndis_device->ndev = net;
@@ -1236,6 +1229,7 @@ struct netvsc_device *rndis_filter_device_add(struct hv_device *dev,
 		}
 	}
 
+	atomic_set(&net_device->sc_offered, num_rss_qs);
 	vmbus_set_sc_create_callback(dev->channel, netvsc_sc_open);
 
 	init_packet = &net_device->channel_init_pkt;
@@ -1251,32 +1245,23 @@ struct netvsc_device *rndis_filter_device_add(struct hv_device *dev,
 			       VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED);
 	if (ret)
 		goto out;
-	wait_for_completion(&net_device->channel_init_wait);
 
-	if (init_packet->msg.v5_msg.subchn_comp.status !=
-	    NVSP_STAT_SUCCESS) {
+	if (init_packet->msg.v5_msg.subchn_comp.status != NVSP_STAT_SUCCESS) {
 		ret = -ENODEV;
 		goto out;
 	}
+	wait_for_completion(&net_device->channel_init_wait);
+
 	net_device->num_chn = 1 +
 		init_packet->msg.v5_msg.subchn_comp.num_subchannels;
 
-	ret = rndis_filter_set_rss_param(rndis_device, netvsc_hash_key,
-					 net_device->num_chn);
-
-	/*
-	 * Set the number of sub-channels to be received.
-	 */
-	spin_lock_irqsave(&net_device->sc_lock, flags);
-	sc_delta = num_rss_qs - (net_device->num_chn - 1);
-	net_device->num_sc_offered -= sc_delta;
-	spin_unlock_irqrestore(&net_device->sc_lock, flags);
-
+	/* ignore failues from setting rss parameters, still have channels */
+	rndis_filter_set_rss_param(rndis_device, netvsc_hash_key,
+				   net_device->num_chn);
 out:
 	if (ret) {
 		net_device->max_chn = 1;
 		net_device->num_chn = 1;
-		net_device->num_sc_offered = 0;
 	}
 
 	return net_device;
@@ -1290,12 +1275,6 @@ void rndis_filter_device_remove(struct hv_device *dev,
 				struct netvsc_device *net_dev)
 {
 	struct rndis_device *rndis_dev = net_dev->extension;
-
-	/* If not all subchannel offers are complete, wait for them until
-	 * completion to avoid race.
-	 */
-	if (net_dev->num_sc_offered > 0)
-		wait_for_completion(&net_dev->channel_init_wait);
 
 	/* Halt and release the rndis device */
 	rndis_filter_halt_device(rndis_dev);
