@@ -3358,6 +3358,12 @@ int _hwrm_send_message(struct bnxt *bp, void *msg, u32 msg_len, int timeout)
 	return bnxt_hwrm_do_send_msg(bp, msg, msg_len, timeout, false);
 }
 
+int _hwrm_send_message_silent(struct bnxt *bp, void *msg, u32 msg_len,
+			      int timeout)
+{
+	return bnxt_hwrm_do_send_msg(bp, msg, msg_len, timeout, true);
+}
+
 int hwrm_send_message(struct bnxt *bp, void *msg, u32 msg_len, int timeout)
 {
 	int rc;
@@ -6180,7 +6186,9 @@ static int __bnxt_open_nic(struct bnxt *bp, bool irq_re_init, bool link_re_init)
 	}
 
 	if (link_re_init) {
+		mutex_lock(&bp->link_lock);
 		rc = bnxt_update_phy_setting(bp);
+		mutex_unlock(&bp->link_lock);
 		if (rc)
 			netdev_warn(bp->dev, "failed to update phy settings\n");
 	}
@@ -6832,30 +6840,28 @@ static void bnxt_sp_task(struct work_struct *work)
 	if (test_and_clear_bit(BNXT_PERIODIC_STATS_SP_EVENT, &bp->sp_event))
 		bnxt_hwrm_port_qstats(bp);
 
-	/* These functions below will clear BNXT_STATE_IN_SP_TASK.  They
-	 * must be the last functions to be called before exiting.
-	 */
 	if (test_and_clear_bit(BNXT_LINK_CHNG_SP_EVENT, &bp->sp_event)) {
-		int rc = 0;
+		int rc;
 
+		mutex_lock(&bp->link_lock);
 		if (test_and_clear_bit(BNXT_LINK_SPEED_CHNG_SP_EVENT,
 				       &bp->sp_event))
 			bnxt_hwrm_phy_qcaps(bp);
 
-		bnxt_rtnl_lock_sp(bp);
-		if (test_bit(BNXT_STATE_OPEN, &bp->state))
-			rc = bnxt_update_link(bp, true);
-		bnxt_rtnl_unlock_sp(bp);
+		rc = bnxt_update_link(bp, true);
+		mutex_unlock(&bp->link_lock);
 		if (rc)
 			netdev_err(bp->dev, "SP task can't update link (rc: %x)\n",
 				   rc);
 	}
 	if (test_and_clear_bit(BNXT_HWRM_PORT_MODULE_SP_EVENT, &bp->sp_event)) {
-		bnxt_rtnl_lock_sp(bp);
-		if (test_bit(BNXT_STATE_OPEN, &bp->state))
-			bnxt_get_port_module_status(bp);
-		bnxt_rtnl_unlock_sp(bp);
+		mutex_lock(&bp->link_lock);
+		bnxt_get_port_module_status(bp);
+		mutex_unlock(&bp->link_lock);
 	}
+	/* These functions below will clear BNXT_STATE_IN_SP_TASK.  They
+	 * must be the last functions to be called before exiting.
+	 */
 	if (test_and_clear_bit(BNXT_RESET_TASK_SP_EVENT, &bp->sp_event))
 		bnxt_reset(bp, false);
 
@@ -7443,6 +7449,7 @@ static int bnxt_probe_phy(struct bnxt *bp)
 			   rc);
 		return rc;
 	}
+	mutex_init(&bp->link_lock);
 
 	rc = bnxt_update_link(bp, false);
 	if (rc) {
@@ -7638,7 +7645,7 @@ static void bnxt_parse_log_pcie_link(struct bnxt *bp)
 	enum pcie_link_width width = PCIE_LNK_WIDTH_UNKNOWN;
 	enum pci_bus_speed speed = PCI_SPEED_UNKNOWN;
 
-	if (pcie_get_minimum_link(bp->pdev, &speed, &width) ||
+	if (pcie_get_minimum_link(pci_physfn(bp->pdev), &speed, &width) ||
 	    speed == PCI_SPEED_UNKNOWN || width == PCIE_LNK_WIDTH_UNKNOWN)
 		netdev_info(bp->dev, "Failed to determine PCIe Link Info\n");
 	else
