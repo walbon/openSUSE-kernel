@@ -1897,6 +1897,10 @@ void bio_trim(struct bio *bio, int offset, int size)
 	bio_advance(bio, offset << 9);
 
 	bio->bi_iter.bi_size = size;
+
+	if (bio_integrity(bio))
+		bio_integrity_trim(bio, 0, size);
+
 }
 EXPORT_SYMBOL_GPL(bio_trim);
 
