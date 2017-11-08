@@ -433,10 +433,13 @@ EXPORT_SYMBOL(bio_integrity_advance);
 /**
  * bio_integrity_trim - Trim integrity vector
  * @bio:	bio whose integrity vector to update
+ * @offset:	offset to first data sector (unused)
+ * @sectors:	number of data sectors (unused)
  *
  * Description: Used to trim the integrity vector in a cloned bio.
  */
-void bio_integrity_trim(struct bio *bio)
+void bio_integrity_trim(struct bio *bio, unsigned int offset,
+			unsigned int sectors)
 {
 	struct bio_integrity_payload *bip = bio_integrity(bio);
 	struct blk_integrity *bi = bdev_get_integrity(bio->bi_bdev);
