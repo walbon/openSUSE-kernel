@@ -50,7 +50,7 @@
 #include <linux/sched/rt.h>
 
 #include <linux/uaccess.h>
-#include <asm-generic/sections.h>
+#include <asm/sections.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/printk.h>
