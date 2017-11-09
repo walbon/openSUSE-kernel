@@ -646,6 +646,7 @@ static int iwl_mvm_tzone_get_temp(struct thermal_zone_device *device,
 	mutex_lock(&mvm->mutex);
 
 	if (!mvm->ucode_loaded || !(mvm->cur_ucode == IWL_UCODE_REGULAR)) {
+		ret = -ENODATA;
 		ret = -EIO;
 		goto out;
 	}
