@@ -4875,7 +4875,7 @@ static int may_commit_transaction(struct btrfs_root *root,
 		bytes -= delayed_rsv->size;
 
 	if (percpu_counter_compare(&space_info->total_bytes_pinned,
-				   bytes < 0)) {
+				   bytes) < 0) {
 		spin_unlock(&delayed_rsv->lock);
 		return -ENOSPC;
 	}
