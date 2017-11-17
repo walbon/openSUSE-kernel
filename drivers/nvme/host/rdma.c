@@ -832,6 +832,7 @@ static void nvme_rdma_error_recovery_work(struct work_struct *work)
 	 * new IO
 	 */
 	blk_mq_start_stopped_hw_queues(ctrl->ctrl.admin_q, true);
+	blk_mq_kick_requeue_list(ctrl->ctrl.admin_q);
 	nvme_start_queues(&ctrl->ctrl);
 
 	nvme_rdma_reconnect_or_remove(ctrl);
@@ -1450,9 +1451,11 @@ static inline int nvme_rdma_queue_is_ready(struct nvme_rdma_queue *queue,
 			 * fail it fast to allow upper layers a chance to
 			 * failover.
 			 */
-			if (queue->ctrl->ctrl.state == NVME_CTRL_RECONNECTING)
+			if (queue->ctrl->ctrl.state == NVME_CTRL_RECONNECTING ||
+			    queue->ctrl->ctrl.state == NVME_CTRL_DELETING) {
+				nvme_req(rq)->status = NVME_SC_ABORT_REQ;
 				return -EIO;
-			else
+			} else
 				return -EAGAIN;
 		}
 	}
