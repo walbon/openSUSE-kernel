@@ -704,7 +704,8 @@ typedef struct pglist_data {
 #ifdef __GENKSYMS__
 	void *suse_kabi_padding;
 #else
-	unsigned long static_init_size;
+	/* Number of non-deferred pages */
+	unsigned long static_init_pgcnt;
 #endif
 #else /* CONFIG_DEFERRED_STRUCT_PAGE_INIT */
 	void *suse_kabi_padding;
