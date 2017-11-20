@@ -693,7 +693,12 @@ typedef struct pglist_data {
 	 * is the first PFN that needs to be initialised.
 	 */
 	unsigned long first_deferred_pfn;
+#ifdef __GENKSYMS__
 	unsigned long static_init_size;
+#else
+	/* Number of non-deferred pages */
+	unsigned long static_init_pgcnt;
+#endif
 #endif /* CONFIG_DEFERRED_STRUCT_PAGE_INIT */
 	void *suse_kabi_padding;
 } pg_data_t;
