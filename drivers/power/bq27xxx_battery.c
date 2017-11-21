@@ -205,6 +205,26 @@ static u8 bq27500_regs[] = {
 	INVALID_REG_ADDR,	/* AP - NA	*/
 };
 
+static u8 bq27510_regs[] = {
+	0x00,	/* CONTROL	*/
+	0x06,	/* TEMP		*/
+	0x28,	/* INT TEMP	*/
+	0x08,	/* VOLT		*/
+	0x14,	/* AVG CURR	*/
+	0x0a,	/* FLAGS	*/
+	0x16,	/* TTE		*/
+	INVALID_REG_ADDR,	/* TTF - NA	*/
+	0x1a,	/* TTES		*/
+	INVALID_REG_ADDR,	/* TTECP - NA	*/
+	0x0c,	/* NAC		*/
+	0x12,	/* LMD(FCC)	*/
+	0x1e,	/* CYCT		*/
+	INVALID_REG_ADDR,	/* AE - NA	*/
+	0x20,	/* SOC(RSOC)	*/
+	0x2e,	/* DCAP(ILMD)	*/
+	INVALID_REG_ADDR,	/* AP - NA	*/
+};
+
 static u8 bq27530_regs[] = {
 	0x00,	/* CONTROL	*/
 	0x06,	/* TEMP		*/
@@ -289,6 +309,7 @@ static u8 *bq27xxx_regs[] = {
 	[BQ27000] = bq27000_regs,
 	[BQ27010] = bq27010_regs,
 	[BQ27500] = bq27500_regs,
+	[BQ27510] = bq27510_regs,
 	[BQ27530] = bq27530_regs,
 	[BQ27541] = bq27541_regs,
 	[BQ27545] = bq27545_regs,
@@ -338,6 +359,24 @@ static enum power_supply_property bq27010_battery_props[] = {
 };
 
 static enum power_supply_property bq27500_battery_props[] = {
+	POWER_SUPPLY_PROP_STATUS,
+	POWER_SUPPLY_PROP_PRESENT,
+	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+	POWER_SUPPLY_PROP_CURRENT_NOW,
+	POWER_SUPPLY_PROP_CAPACITY,
+	POWER_SUPPLY_PROP_CAPACITY_LEVEL,
+	POWER_SUPPLY_PROP_TEMP,
+	POWER_SUPPLY_PROP_TIME_TO_EMPTY_NOW,
+	POWER_SUPPLY_PROP_TECHNOLOGY,
+	POWER_SUPPLY_PROP_CHARGE_FULL,
+	POWER_SUPPLY_PROP_CHARGE_NOW,
+	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+	POWER_SUPPLY_PROP_CYCLE_COUNT,
+	POWER_SUPPLY_PROP_HEALTH,
+	POWER_SUPPLY_PROP_MANUFACTURER,
+};
+
+static enum power_supply_property bq27510_battery_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
@@ -438,6 +477,7 @@ static struct {
 	BQ27XXX_PROP(BQ27000, bq27000_battery_props),
 	BQ27XXX_PROP(BQ27010, bq27010_battery_props),
 	BQ27XXX_PROP(BQ27500, bq27500_battery_props),
+	BQ27XXX_PROP(BQ27510, bq27510_battery_props),
 	BQ27XXX_PROP(BQ27530, bq27530_battery_props),
 	BQ27XXX_PROP(BQ27541, bq27541_battery_props),
 	BQ27XXX_PROP(BQ27545, bq27545_battery_props),
@@ -661,7 +701,8 @@ static int bq27xxx_battery_read_pwr_avg(struct bq27xxx_device_info *di)
  */
 static bool bq27xxx_battery_overtemp(struct bq27xxx_device_info *di, u16 flags)
 {
-	if (di->chip == BQ27500 || di->chip == BQ27541 || di->chip == BQ27545)
+	if (di->chip == BQ27500 || di->chip == BQ27510 ||
+	    di->chip == BQ27541 || di->chip == BQ27545)
 		return flags & (BQ27XXX_FLAG_OTC | BQ27XXX_FLAG_OTD);
 	if (di->chip == BQ27530 || di->chip == BQ27421)
 		return flags & BQ27XXX_FLAG_OT;
@@ -1184,8 +1225,8 @@ static const struct i2c_device_id bq27xxx_id[] = {
 	{ "bq27200", BQ27000 },
 	{ "bq27210", BQ27010 },
 	{ "bq27500", BQ27500 },
-	{ "bq27510", BQ27500 },
-	{ "bq27520", BQ27500 },
+	{ "bq27510", BQ27510 },
+	{ "bq27520", BQ27510 },
 	{ "bq27530", BQ27530 },
 	{ "bq27531", BQ27530 },
 	{ "bq27541", BQ27541 },
