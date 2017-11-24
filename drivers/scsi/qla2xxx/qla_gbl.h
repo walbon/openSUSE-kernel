@@ -106,6 +106,7 @@ int qla24xx_post_newsess_work(struct scsi_qla_host *, port_id_t *, u8 *,
     void *);
 int qla24xx_fcport_handle_login(struct scsi_qla_host *, fc_port_t *);
 
+int qla24xx_post_gpdb_work(struct scsi_qla_host *, fc_port_t *, u8);
 /*
  * Global Data in qla_os.c source file.
  */
@@ -631,6 +632,7 @@ void qla24xx_handle_gpnid_event(scsi_qla_host_t *, struct event_arg *);
 int qla24xx_post_gpsc_work(struct scsi_qla_host *, fc_port_t *);
 int qla24xx_async_gpsc(scsi_qla_host_t *, fc_port_t *);
 int qla2x00_mgmt_svr_login(scsi_qla_host_t *);
+const char *sp_to_str(uint16_t);
 
 /*
  * Global Function Prototypes in qla_attr.c source file.

@@ -252,6 +252,8 @@
 #define NPH_F_PORT		0x7fe		/*  FFFFFE */
 #define NPH_IP_BROADCAST	0x7ff		/*  FFFFFF */
 
+#define NPH_SNS_LID(ha)	(IS_FWI2_CAPABLE(ha) ? NPH_SNS : SIMPLE_NAME_SERVER)
+
 #define MAX_CMDSZ	16		/* SCSI maximum CDB size. */
 #include "qla_fw.h"
 
@@ -312,6 +314,29 @@ struct srb_cmd {
 /* To identify if a srb is of T10-CRC type. @sp => srb_t pointer */
 #define IS_PROT_IO(sp)	(sp->flags & SRB_CRC_CTX_DSD_VALID)
 
+/*
+ * 24 bit port ID type definition.
+ */
+typedef union {
+	uint32_t b24 : 24;
+
+	struct {
+#ifdef __BIG_ENDIAN
+		uint8_t domain;
+		uint8_t area;
+		uint8_t al_pa;
+#elif defined(__LITTLE_ENDIAN)
+		uint8_t al_pa;
+		uint8_t area;
+		uint8_t domain;
+#else
+#error "__BIG_ENDIAN or __LITTLE_ENDIAN must be defined!"
+#endif
+		uint8_t rsvd_1;
+	} b;
+} port_id_t;
+#define INVALID_PORT_ID	0xFFFFFF
+
 struct els_logo_payload {
 	uint8_t opcode;
 	uint8_t rsvd[3];
@@ -329,6 +354,7 @@ struct ct_arg {
 	u32		rsp_size;
 	void		*req;
 	void		*rsp;
+	port_id_t	id;
 };
 
 /*
@@ -415,6 +441,37 @@ struct srb_iocb {
 	void (*timeout)(void *);
 };
 
+enum {
+	SPCN_UNKOWN,
+	SPCN_GIDPN,
+	SPCN_GPSC,
+	SPCN_GPNID,
+	SPCN_GPNFT,
+	SPCN_GNNID,
+	SPCN_GFPNID,
+	SPCN_LOGIN,
+	SPCN_LOGOUT,
+	SPCN_ADISC,
+	SPCN_GNLIST,
+	SPCN_GPDB,
+	SPCN_TMF,
+	SPCN_ABORT ,
+	SPCN_NACK,
+	SPCN_BSG_RPT,
+	SPCN_BSG_HST ,
+	SPCN_BSG_CT,
+	SPCN_BSG_FX_MGMT,
+	SPCN_ELS_DCMD,
+	SPCN_FXDISC,
+	SPCN_GIDLIST,
+	SPCN_STATS,
+	SPCN_MB_GPDB,
+};
+struct sp_name {
+        uint16_t cmd;
+        const char *str;
+};
+
 /* Values for srb_ctx type */
 #define SRB_LOGIN_CMD	1
 #define SRB_LOGOUT_CMD	2
@@ -445,6 +502,7 @@ typedef struct srb {
 	const char *name;
 	int iocbs;
 	struct qla_qpair *qpair;
+	struct list_head elem;
 	u32 gen1;	/* scratch */
 	u32 gen2;	/* scratch */
 	union {
@@ -2106,28 +2164,6 @@ struct imm_ntfy_from_isp {
 #define REQUEST_ENTRY_SIZE	(sizeof(request_t))
 
 
-/*
- * 24 bit port ID type definition.
- */
-typedef union {
-	uint32_t b24 : 24;
-
-	struct {
-#ifdef __BIG_ENDIAN
-		uint8_t domain;
-		uint8_t area;
-		uint8_t al_pa;
-#elif defined(__LITTLE_ENDIAN)
-		uint8_t al_pa;
-		uint8_t area;
-		uint8_t domain;
-#else
-#error "__BIG_ENDIAN or __LITTLE_ENDIAN must be defined!"
-#endif
-		uint8_t rsvd_1;
-	} b;
-} port_id_t;
-#define INVALID_PORT_ID	0xFFFFFF
 
 /*
  * Switch info gathering structure.
@@ -3983,6 +4019,7 @@ typedef struct scsi_qla_host {
 #define LOOP_READY	5
 #define LOOP_DEAD	6
 
+	unsigned long   relogin_jif;
 	unsigned long   dpc_flags;
 #define RESET_MARKER_NEEDED	0	/* Send marker to ISP. */
 #define RESET_ACTIVE		1
@@ -4017,7 +4054,6 @@ typedef struct scsi_qla_host {
 #define PFLG_DISCONNECTED	0	/* PCI device removed */
 #define PFLG_DRIVER_REMOVING	1	/* PCI driver .remove */
 #define PFLG_DRIVER_PROBING	2	/* PCI driver .probe */
-#define PCI_ERR			30
 
 	uint32_t	device_flags;
 #define SWITCH_FOUND		BIT_0
@@ -4118,6 +4154,7 @@ typedef struct scsi_qla_host {
 	int fcport_count;
 	wait_queue_head_t fcport_waitQ;
 	wait_queue_head_t vref_waitq;
+	struct list_head gpnid_list;
 } scsi_qla_host_t;
 
 struct qla27xx_image_status {
