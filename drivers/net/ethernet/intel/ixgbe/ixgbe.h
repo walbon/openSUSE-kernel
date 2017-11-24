@@ -660,6 +660,7 @@ struct ixgbe_adapter {
 #define IXGBE_FLAG2_PHY_INTERRUPT		BIT(11)
 #define IXGBE_FLAG2_VXLAN_REREG_NEEDED		BIT(12)
 #define IXGBE_FLAG2_VLAN_PROMISC		BIT(13)
+#define IXGBE_FLAG2_ROOT_RELAXED_ORDERING	BIT(14)
 
 	/* Tx fast path data */
 	int num_tx_queues;

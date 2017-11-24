@@ -9310,6 +9310,7 @@ static int ixgbe_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	u16 device_caps;
 #endif
 	u32 eec;
+	struct pci_dev *root;
 
 	/* Catch broken hardware that put the wrong VF device ID in
 	 * the PCIe SR-IOV capability.
@@ -9380,6 +9381,24 @@ static int ixgbe_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		err = -EIO;
 		goto err_ioremap;
 	}
+
+	/* If possible, we use PCIe Relaxed Ordering Attribute to deliver
+	 * Ingress Packet Data to Free List Buffers in order to allow for
+	 * chipset performance optimizations between the Root Complex and
+	 * Memory Controllers.  (Messages to the associated Ingress Queue
+	 * notifying new Packet Placement in the Free Lists Buffers will be
+	 * send without the Relaxed Ordering Attribute thus guaranteeing that
+	 * all preceding PCIe Transaction Layer Packets will be processed
+	 * first.)  But some Root Complexes have various issues with Upstream
+	 * Transaction Layer Packets with the Relaxed Ordering Attribute set.
+	 * The PCIe devices which under the Root Complexes will be cleared the
+	 * Relaxed Ordering bit in the configuration space, So we check our
+	 * PCIe configuration space to see if it's flagged with advice against
+	 * using Relaxed Ordering.
+	 */
+	root = pci_find_pcie_root_port(adapter->pdev);
+	if (root && (root->dev_flags & PCI_DEV_FLAGS_RELAXED_ORDERING))
+		adapter->flags2 |= IXGBE_FLAG2_ROOT_RELAXED_ORDERING;
 
 	netdev->netdev_ops = &ixgbe_netdev_ops;
 	ixgbe_set_ethtool_ops(netdev);
