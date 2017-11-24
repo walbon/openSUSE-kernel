@@ -416,6 +416,9 @@ lpfc_nvme_ls_req(struct nvme_fc_local_port *pnvme_lport,
 	lport = (struct lpfc_nvme_lport *)pnvme_lport->private;
 	vport = lport->vport;
 
+	if (vport->load_flag & FC_UNLOADING)
+		return -ENODEV;
+
 	ndlp = lpfc_findnode_did(vport, pnvme_rport->port_id);
 	if (!ndlp || !NLP_CHK_NODE_ACT(ndlp)) {
 		lpfc_printf_vlog(vport, KERN_ERR, LOG_NODE | LOG_NVME_IOERR,
@@ -667,14 +670,16 @@ lpfc_nvme_ktime(struct lpfc_hba *phba,
 		struct lpfc_nvme_buf *lpfc_ncmd)
 {
 	uint64_t seg1, seg2, seg3, seg4;
+	uint64_t segsum;
 
-	if (!phba->ktime_on)
-		return;
 	if (!lpfc_ncmd->ts_last_cmd ||
 	    !lpfc_ncmd->ts_cmd_start ||
 	    !lpfc_ncmd->ts_cmd_wqput ||
 	    !lpfc_ncmd->ts_isr_cmpl ||
 	    !lpfc_ncmd->ts_data_nvme)
+		return;
+
+	if (lpfc_ncmd->ts_data_nvme < lpfc_ncmd->ts_cmd_start)
 		return;
 	if (lpfc_ncmd->ts_cmd_start < lpfc_ncmd->ts_last_cmd)
 		return;
@@ -695,15 +700,23 @@ lpfc_nvme_ktime(struct lpfc_hba *phba,
 	 * cmpl is handled off to the NVME Layer.
 	 */
 	seg1 = lpfc_ncmd->ts_cmd_start - lpfc_ncmd->ts_last_cmd;
-	if (seg1 > 5000000)  /* 5 ms - for sequential IOs */
-		return;
+	if (seg1 > 5000000)  /* 5 ms - for sequential IOs only */
+		seg1 = 0;
 
 	/* Calculate times relative to start of IO */
 	seg2 = (lpfc_ncmd->ts_cmd_wqput - lpfc_ncmd->ts_cmd_start);
-	seg3 = (lpfc_ncmd->ts_isr_cmpl -
-		lpfc_ncmd->ts_cmd_start) - seg2;
-	seg4 = (lpfc_ncmd->ts_data_nvme -
-		lpfc_ncmd->ts_cmd_start) - seg2 - seg3;
+	segsum = seg2;
+	seg3 = lpfc_ncmd->ts_isr_cmpl - lpfc_ncmd->ts_cmd_start;
+	if (segsum > seg3)
+		return;
+	seg3 -= segsum;
+	segsum += seg3;
+
+	seg4 = lpfc_ncmd->ts_data_nvme - lpfc_ncmd->ts_cmd_start;
+	if (segsum > seg4)
+		return;
+	seg4 -= segsum;
+
 	phba->ktime_data_samples++;
 	phba->ktime_seg1_total += seg1;
 	if (seg1 < phba->ktime_seg1_min)
@@ -887,7 +900,7 @@ lpfc_nvme_io_cmd_wqe_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pwqeIn,
 					 bf_get(lpfc_wcqe_c_xb, wcqe));
 		default:
 out_err:
-			lpfc_printf_vlog(vport, KERN_ERR, LOG_NVME_IOERR,
+			lpfc_printf_vlog(vport, KERN_INFO, LOG_NVME_IOERR,
 					 "6072 NVME Completion Error: xri %x "
 					 "status x%x result x%x placed x%x\n",
 					 lpfc_ncmd->cur_iocbq.sli4_xritag,
@@ -913,7 +926,7 @@ out_err:
 	 * owns the dma address.
 	 */
 #ifdef CONFIG_SCSI_LPFC_DEBUG_FS
-	if (phba->ktime_on) {
+	if (lpfc_ncmd->ts_cmd_start) {
 		lpfc_ncmd->ts_isr_cmpl = pwqeIn->isr_timestamp;
 		lpfc_ncmd->ts_data_nvme = ktime_get_ns();
 		phba->ktime_last_cmd = lpfc_ncmd->ts_data_nvme;
@@ -1136,12 +1149,12 @@ lpfc_nvme_prep_io_dma(struct lpfc_vport *vport,
 
 		first_data_sgl = sgl;
 		lpfc_ncmd->seg_cnt = nCmd->sg_cnt;
-		if (lpfc_ncmd->seg_cnt > phba->cfg_nvme_seg_cnt) {
+		if (lpfc_ncmd->seg_cnt > phba->cfg_nvme_seg_cnt + 1) {
 			lpfc_printf_log(phba, KERN_ERR, LOG_NVME_IOERR,
 					"6058 Too many sg segments from "
 					"NVME Transport.  Max %d, "
 					"nvmeIO sg_cnt %d\n",
-					phba->cfg_nvme_seg_cnt,
+					phba->cfg_nvme_seg_cnt + 1,
 					lpfc_ncmd->seg_cnt);
 			lpfc_ncmd->seg_cnt = 0;
 			return 1;
@@ -1242,6 +1255,21 @@ lpfc_nvme_fcp_io_submit(struct nvme_fc_local_port *pnvme_lport,
 	vport = lport->vport;
 	phba = vport->phba;
 
+	if (vport->load_flag & FC_UNLOADING) {
+		ret = -ENODEV;
+		goto out_fail;
+	}
+
+	/* Validate pointers. */
+	if (!pnvme_lport || !pnvme_rport || !freqpriv) {
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_NVME_IOERR | LOG_NODE,
+				 "6117 No Send:IO submit ptrs NULL, lport %p, "
+				 "rport %p fcreq_priv %p\n",
+				 pnvme_lport, pnvme_rport, freqpriv);
+		ret = -ENODEV;
+		goto out_fail;
+	}
+
 #ifdef CONFIG_SCSI_LPFC_DEBUG_FS
 	if (phba->ktime_on)
 		start = ktime_get_ns();
@@ -1300,9 +1328,11 @@ lpfc_nvme_fcp_io_submit(struct nvme_fc_local_port *pnvme_lport,
 		goto out_fail;
 	}
 #ifdef CONFIG_SCSI_LPFC_DEBUG_FS
-	if (phba->ktime_on) {
+	if (start) {
 		lpfc_ncmd->ts_cmd_start = start;
 		lpfc_ncmd->ts_last_cmd = phba->ktime_last_cmd;
+	} else {
+		lpfc_ncmd->ts_cmd_start = 0;
 	}
 #endif
 
@@ -1344,7 +1374,7 @@ lpfc_nvme_fcp_io_submit(struct nvme_fc_local_port *pnvme_lport,
 	ret = lpfc_sli4_issue_wqe(phba, LPFC_FCP_RING, &lpfc_ncmd->cur_iocbq);
 	if (ret) {
 		atomic_dec(&ndlp->cmd_pending);
-		lpfc_printf_vlog(vport, KERN_ERR, LOG_NVME_IOERR,
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_NVME_IOERR,
 				 "6113 FCP could not issue WQE err %x "
 				 "sid: x%x did: x%x oxid: x%x\n",
 				 ret, vport->fc_myDID, ndlp->nlp_DID,
@@ -1353,7 +1383,7 @@ lpfc_nvme_fcp_io_submit(struct nvme_fc_local_port *pnvme_lport,
 	}
 
 #ifdef CONFIG_SCSI_LPFC_DEBUG_FS
-	if (phba->ktime_on)
+	if (lpfc_ncmd->ts_cmd_start)
 		lpfc_ncmd->ts_cmd_wqput = ktime_get_ns();
 
 	if (phba->cpucheck_on & LPFC_CHECK_NVME_IO) {
@@ -1404,7 +1434,7 @@ void
 lpfc_nvme_abort_fcreq_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 			   struct lpfc_wcqe_complete *abts_cmpl)
 {
-	lpfc_printf_log(phba, KERN_ERR, LOG_NVME,
+	lpfc_printf_log(phba, KERN_INFO, LOG_NVME,
 			"6145 ABORT_XRI_CN completing on rpi x%x "
 			"original iotag x%x, abort cmd iotag x%x "
 			"req_tag x%x, status x%x, hwstatus x%x\n",
@@ -2306,6 +2336,7 @@ lpfc_nvme_register_port(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 	struct lpfc_nvme_rport *rport;
 	struct nvme_fc_remote_port *remote_port;
 	struct nvme_fc_port_info rpinfo;
+	struct lpfc_nodelist *prev_ndlp;
 
 	lpfc_printf_vlog(ndlp->vport, KERN_INFO, LOG_NVME_DISC,
 			 "6006 Register NVME PORT. DID x%06x nlptype x%x\n",
@@ -2342,7 +2373,7 @@ lpfc_nvme_register_port(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 		 * new rport.
 		 */
 		rport = remote_port->private;
-		if (ndlp->nrport == rport) {
+		if (ndlp->nrport) {
 			lpfc_printf_vlog(ndlp->vport, KERN_INFO,
 					 LOG_NVME_DISC,
 					 "6014 Rebinding lport to "
@@ -2353,24 +2384,33 @@ lpfc_nvme_register_port(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 					 remote_port->port_role,
 					 ndlp->nlp_type,
 					 ndlp->nlp_DID);
-		} else {
-			/* New rport. */
-			rport->remoteport = remote_port;
-			rport->lport = lport;
-			rport->ndlp = lpfc_nlp_get(ndlp);
-			if (!rport->ndlp)
-				return -1;
-			ndlp->nrport = rport;
-			lpfc_printf_vlog(vport, KERN_INFO,
-					 LOG_NVME_DISC | LOG_NODE,
-					 "6022 Binding new rport to "
-					 "lport %p Rport WWNN 0x%llx, "
-					 "Rport WWPN 0x%llx DID "
-					 "x%06x Role x%x\n",
-					 lport,
-					 rpinfo.node_name, rpinfo.port_name,
-					 rpinfo.port_id, rpinfo.port_role);
+			prev_ndlp = rport->ndlp;
+
+			/* Sever the ndlp<->rport connection before dropping
+			 * the ndlp ref from register.
+			 */
+			ndlp->nrport = NULL;
+			rport->ndlp = NULL;
+			if (prev_ndlp)
+				lpfc_nlp_put(ndlp);
 		}
+
+		/* Clean bind the rport to the ndlp. */
+		rport->remoteport = remote_port;
+		rport->lport = lport;
+		rport->ndlp = lpfc_nlp_get(ndlp);
+		if (!rport->ndlp)
+			return -1;
+		ndlp->nrport = rport;
+		lpfc_printf_vlog(vport, KERN_INFO,
+				 LOG_NVME_DISC | LOG_NODE,
+				 "6022 Binding new rport to "
+				 "lport %p Rport WWNN 0x%llx, "
+				 "Rport WWPN 0x%llx DID "
+				 "x%06x Role x%x\n",
+				 lport,
+				 rpinfo.node_name, rpinfo.port_name,
+				 rpinfo.port_id, rpinfo.port_role);
 	} else {
 		lpfc_printf_vlog(vport, KERN_ERR,
 				 LOG_NVME_DISC | LOG_NODE,
