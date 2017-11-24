@@ -3935,6 +3935,25 @@ DECLARE_PCI_FIXUP_CLASS_EARLY(0x1797, 0x6869, PCI_CLASS_NOT_DEFINED, 8,
 			      quirk_tw686x_class);
 
 /*
+ * Some devices have problems with Transaction Layer Packets with the Relaxed
+ * Ordering Attribute set.  Such devices should mark themselves and other
+ * Device Drivers should check before sending TLPs with RO set.
+ */
+static void quirk_relaxedordering_enable(struct pci_dev *dev)
+{
+	dev->dev_flags |= PCI_DEV_FLAGS_RELAXED_ORDERING;
+	dev_info(&dev->dev, "Enable Relaxed Ordering attribute to avoid PCIe completion erratum\n");
+}
+
+/*
+ * The Hisilicon processors base on Hip07 microarchitecture Root Complex has
+ * a Flow Control credit issue which can cause performance problems with Upstream
+ * Transaction Layer Packets with Relaxed Ordering cleared, so enable it.
+ */
+DECLARE_PCI_FIXUP_CLASS_EARLY(PCI_VENDOR_ID_HUAWEI, 0x1610, PCI_CLASS_BRIDGE_PCI, 8,
+			      quirk_relaxedordering_enable);
+
+/*
  * Per PCIe r3.0, sec 2.2.9, "Completion headers must supply the same
  * values for the Attribute as were supplied in the header of the
  * corresponding Request, except as explicitly allowed when IDO is used."
