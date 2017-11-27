@@ -1506,10 +1506,6 @@ static struct snd_pci_quirk probe_mask_list[] = {
 	SND_PCI_QUIRK(0x1046, 0x1262, "ASUS W5F", 0x103),
 	/* WinFast VP200 H (Teradici) user reported broken communication */
 	SND_PCI_QUIRK(0x3a21, 0x040d, "WinFast VP200 H", 0x101),
-	/* FIXME: i915 KBL interferes HD-audio controller on Leap 42.3 */
-	SND_PCI_QUIRK(0x1025, 0x1085, "Acer ES15", 0x101),
-	SND_PCI_QUIRK(0x1043, 0x15a0, "ASUS UX310", 0x101),
-	SND_PCI_QUIRK(0x17aa, 0x224b, "Lenovo T470", 0x101),
 	{}
 };
 
