@@ -23,6 +23,12 @@
 #ifndef __TPM_TIS_CORE_H__
 #define __TPM_TIS_CORE_H__
 
+#ifndef __GENKSYMS__
+#define CONST const
+#else
+#define CONST
+#endif
+
 #include "tpm.h"
 
 enum tis_access {
@@ -98,7 +104,7 @@ struct tpm_tis_phy_ops {
 	int (*read_bytes)(struct tpm_tis_data *data, u32 addr, u16 len,
 			  u8 *result);
 	int (*write_bytes)(struct tpm_tis_data *data, u32 addr, u16 len,
-			   const u8 *value);
+			   CONST u8 *value);
 	int (*read16)(struct tpm_tis_data *data, u32 addr, u16 *result);
 	int (*read32)(struct tpm_tis_data *data, u32 addr, u32 *result);
 	int (*write32)(struct tpm_tis_data *data, u32 addr, u32 src);
@@ -128,7 +134,7 @@ static inline int tpm_tis_read32(struct tpm_tis_data *data, u32 addr,
 }
 
 static inline int tpm_tis_write_bytes(struct tpm_tis_data *data, u32 addr,
-				      u16 len, const u8 *value)
+				      u16 len, CONST u8 *value)
 {
 	return data->phy_ops->write_bytes(data, addr, len, value);
 }

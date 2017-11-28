@@ -55,7 +55,7 @@ static inline struct tpm_tis_spi_phy *to_tpm_tis_spi_phy(struct tpm_tis_data *da
 }
 
 static int tpm_tis_spi_transfer(struct tpm_tis_data *data, u32 addr, u16 len,
-				u8 *in, const u8 *out)
+				u8 *in, CONST u8 *out)
 {
 	struct tpm_tis_spi_phy *phy = to_tpm_tis_spi_phy(data);
 	int ret = 0;
@@ -145,7 +145,7 @@ static int tpm_tis_spi_read_bytes(struct tpm_tis_data *data, u32 addr,
 }
 
 static int tpm_tis_spi_write_bytes(struct tpm_tis_data *data, u32 addr,
-				   u16 len, const u8 *value)
+				   u16 len, CONST u8 *value)
 {
 	return tpm_tis_spi_transfer(data, addr, len, NULL, value);
 }
