@@ -107,6 +107,9 @@ static int cache_shared_cpu_map_setup(unsigned int cpu)
 	unsigned int index;
 	int ret = 0;
 
+	if (this_cpu_ci->cpu_map_populated)
+		return 0;
+
 	if (of_have_populated_dt())
 		ret = cache_setup_of_node(cpu);
 	else if (!acpi_disabled)
