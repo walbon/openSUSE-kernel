@@ -52,7 +52,6 @@ struct nvme_fc_queue {
 	struct device		*dev;
 	struct blk_mq_hw_ctx	*hctx;
 	void			*lldd_handle;
-	int			queue_size;
 	size_t			cmnd_capsule_len;
 	u32			qnum;
 	u32			rqcnt;
@@ -1898,7 +1897,7 @@ nvme_fc_init_admin_hctx(struct blk_mq_hw_ctx *hctx, void *data,
 }
 
 static void
-nvme_fc_init_queue(struct nvme_fc_ctrl *ctrl, int idx, size_t queue_size)
+nvme_fc_init_queue(struct nvme_fc_ctrl *ctrl, int idx)
 {
 	struct nvme_fc_queue *queue;
 
@@ -1913,8 +1912,6 @@ nvme_fc_init_queue(struct nvme_fc_ctrl *ctrl, int idx, size_t queue_size)
 		queue->cmnd_capsule_len = ctrl->ctrl.ioccsz * 16;
 	else
 		queue->cmnd_capsule_len = sizeof(struct nvme_command);
-
-	queue->queue_size = queue_size;
 
 	/*
 	 * Considered whether we should allocate buffers for all SQEs
@@ -2039,7 +2036,7 @@ nvme_fc_init_io_queues(struct nvme_fc_ctrl *ctrl)
 	int i;
 
 	for (i = 1; i < ctrl->queue_count; i++)
-		nvme_fc_init_queue(ctrl, i, ctrl->ctrl.opts->queue_size);
+		nvme_fc_init_queue(ctrl, i);
 }
 
 static void
@@ -2665,7 +2662,7 @@ nvme_fc_create_association(struct nvme_fc_ctrl *ctrl)
 	 * Create the admin queue
 	 */
 
-	nvme_fc_init_queue(ctrl, 0, NVME_FC_AQ_BLKMQ_DEPTH);
+	nvme_fc_init_queue(ctrl, 0);
 
 	ret = __nvme_fc_create_hw_queue(ctrl, &ctrl->queues[0], 0,
 				NVME_FC_AQ_BLKMQ_DEPTH);
@@ -2699,10 +2696,8 @@ nvme_fc_create_association(struct nvme_fc_ctrl *ctrl)
 		goto out_disconnect_admin_queue;
 	}
 
-	if (NVME_CAP_MQES(ctrl->cap) < ctrl->ctrl.sqsize) {
-		ctrl->ctrl.sqsize = NVME_CAP_MQES(ctrl->cap);
-		opts->queue_size = ctrl->ctrl.sqsize + 1;
-	}
+	ctrl->ctrl.sqsize =
+		min_t(int, NVME_CAP_MQES(ctrl->cap) + 1, ctrl->ctrl.sqsize);
 
 	ret = nvme_enable_ctrl(&ctrl->ctrl, ctrl->cap);
 	if (ret)
@@ -2736,7 +2731,6 @@ nvme_fc_create_association(struct nvme_fc_ctrl *ctrl)
 			"to queue_size\n",
 			opts->queue_size, ctrl->ctrl.maxcmd);
 		opts->queue_size = ctrl->ctrl.maxcmd;
-		ctrl->ctrl.sqsize = opts->queue_size - 1;
 	}
 
 	ret = nvme_fc_init_aen_ops(ctrl);
