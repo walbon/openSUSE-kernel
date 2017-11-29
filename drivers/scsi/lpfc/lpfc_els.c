@@ -1625,7 +1625,7 @@ lpfc_plogi_confirm_nport(struct lpfc_hba *phba, uint32_t *prsp,
 	keep_nlp_state = new_ndlp->nlp_state;
 	lpfc_nlp_set_state(vport, new_ndlp, ndlp->nlp_state);
 
-	/* For nvme, swap the nrport. */
+	/* interchange the nvme remoteport structs */
 	keep_nrport = new_ndlp->nrport;
 	new_ndlp->nrport = ndlp->nrport;
 
@@ -3496,14 +3496,12 @@ lpfc_els_retry(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 			 * on this rport.
 			 */
 			if (stat.un.b.lsRjtRsnCodeExp ==
-			    LSEXP_REQ_UNSUPPORTED) {
-				if (cmd == ELS_CMD_PRLI) {
-					spin_lock_irq(shost->host_lock);
-					ndlp->nlp_flag |= NLP_FCP_PRLI_RJT;
-					spin_unlock_irq(shost->host_lock);
-					retry = 0;
-					goto out_retry;
-				}
+			    LSEXP_REQ_UNSUPPORTED && cmd == ELS_CMD_PRLI) {
+				spin_lock_irq(shost->host_lock);
+				ndlp->nlp_flag |= NLP_FCP_PRLI_RJT;
+				spin_unlock_irq(shost->host_lock);
+				retry = 0;
+				goto out_retry;
 			}
 			break;
 		}
@@ -3994,29 +3992,23 @@ lpfc_cmpl_els_rsp(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 	if (mbox) {
 		if ((rspiocb->iocb.ulpStatus == 0)
 		    && (ndlp->nlp_flag & NLP_ACC_REGLOGIN)) {
-			if (!lpfc_unreg_rpi(vport, ndlp)) {
-				if (ndlp->nlp_state ==  NLP_STE_PLOGI_ISSUE ||
-				    ndlp->nlp_state ==
-				     NLP_STE_REG_LOGIN_ISSUE) {
-					lpfc_printf_vlog(vport, KERN_INFO,
-							 LOG_DISCOVERY,
-							 "0314 PLOGI recov "
-							 "DID x%x "
-							 "Data: x%x x%x x%x\n",
-							 ndlp->nlp_DID,
-							 ndlp->nlp_state,
-							 ndlp->nlp_rpi,
-							 ndlp->nlp_flag);
-					mp = (struct lpfc_dmabuf *)
-					      mbox->context1;
-					if (mp) {
-						lpfc_mbuf_free(phba, mp->virt,
-							       mp->phys);
-						kfree(mp);
-					}
-					mempool_free(mbox, phba->mbox_mem_pool);
-					goto out;
+			if (!lpfc_unreg_rpi(vport, ndlp) &&
+			    (ndlp->nlp_state ==  NLP_STE_PLOGI_ISSUE ||
+			     ndlp->nlp_state == NLP_STE_REG_LOGIN_ISSUE)) {
+				lpfc_printf_vlog(vport, KERN_INFO,
+					LOG_DISCOVERY,
+					"0314 PLOGI recov DID x%x "
+					"Data: x%x x%x x%x\n",
+					ndlp->nlp_DID, ndlp->nlp_state,
+					ndlp->nlp_rpi, ndlp->nlp_flag);
+				mp = mbox->context1;
+				if (mp) {
+					lpfc_mbuf_free(phba, mp->virt,
+						       mp->phys);
+					kfree(mp);
 				}
+				mempool_free(mbox, phba->mbox_mem_pool);
+				goto out;
 			}
 
 			/* Increment reference count to ndlp to hold the

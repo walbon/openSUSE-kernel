@@ -173,7 +173,7 @@ struct nvme_fc_ctrl {
 	struct kref		ref;
 	u32			flags;
 	u32			iocnt;
-	struct completion	ioaborts_done;
+	wait_queue_head_t	ioabort_wait;
 
 	struct nvme_fc_fcp_op	aen_ops[NVME_FC_NR_AEN_COMMANDS];
 
@@ -1561,7 +1561,7 @@ __nvme_fc_fcpop_chk_teardowns(struct nvme_fc_ctrl *ctrl,
 	if (unlikely(op->flags & FCOP_FLAGS_TERMIO)) {
 		if (ctrl->flags & FCCTRL_TERMIO) {
 			if (!--ctrl->iocnt)
-				complete(&ctrl->ioaborts_done);
+				wake_up(&ctrl->ioabort_wait);
 		}
 	}
 	if (op->flags & FCOP_FLAGS_RELEASED)
@@ -2832,15 +2832,7 @@ nvme_fc_delete_association(struct nvme_fc_ctrl *ctrl)
 
 	/* wait for all io that had to be aborted */
 	spin_lock_irqsave(&ctrl->lock, flags);
-	if (ctrl->iocnt) {
-		init_completion(&ctrl->ioaborts_done);
-		spin_unlock_irqrestore(&ctrl->lock, flags);
-
-		wait_for_completion(&ctrl->ioaborts_done);
-
-		spin_lock_irqsave(&ctrl->lock, flags);
-		WARN_ON(ctrl->iocnt);
-	}
+	wait_event_lock_irq(ctrl->ioabort_wait, ctrl->iocnt == 0, ctrl->lock);
 	ctrl->flags &= ~FCCTRL_TERMIO;
 	spin_unlock_irqrestore(&ctrl->lock, flags);
 

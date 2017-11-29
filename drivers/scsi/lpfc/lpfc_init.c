@@ -3079,17 +3079,13 @@ lpfc_online(struct lpfc_hba *phba)
 		/* Reestablish the local initiator port.
 		 * The offline process destroyed the previous lport.
 		 */
-		if (phba->cfg_enable_fc4_type & LPFC_ENABLE_NVME) {
-			if (!phba->nvmet_support) {
-				error = lpfc_nvme_create_localport(phba->pport);
-				if (error) {
-					lpfc_printf_log(phba, KERN_ERR,
-							LOG_INIT,
-							"6132 NVME restore reg "
-							"failed on nvmei error "
-							"x%x\n", error);
-				}
-			}
+		if (phba->cfg_enable_fc4_type & LPFC_ENABLE_NVME &&
+				!phba->nvmet_support) {
+			error = lpfc_nvme_create_localport(phba->pport);
+			if (error)
+				lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+					"6132 NVME restore reg failed "
+					"on nvmei error x%x\n", error);
 		}
 	} else {
 		lpfc_sli_queue_init(phba);
