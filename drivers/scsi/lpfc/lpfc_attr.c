@@ -255,7 +255,7 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 		len += snprintf(buf + len, PAGE_SIZE - len,
 				"IO_CTX: %08x  WAIT: cur %08x tot %08x\n"
 				"CTX Outstanding %08llx\n",
-				phba->sli4_hba.nvmet_ctx_cnt,
+				phba->sli4_hba.nvmet_xri_cnt,
 				phba->sli4_hba.nvmet_io_wait_cnt,
 				phba->sli4_hba.nvmet_io_wait_total,
 				tot);
@@ -3248,9 +3248,11 @@ lpfc_update_rport_devloss_tmo(struct lpfc_vport *vport)
 			continue;
 		if (ndlp->rport)
 			ndlp->rport->dev_loss_tmo = vport->cfg_devloss_tmo;
+#if (IS_ENABLED(CONFIG_NVME_FC))
 		if (ndlp->nrport)
 			nvme_fc_set_remoteport_devloss(ndlp->nrport->remoteport,
 						       vport->cfg_devloss_tmo);
+#endif
 	}
 	spin_unlock_irq(shost->host_lock);
 }

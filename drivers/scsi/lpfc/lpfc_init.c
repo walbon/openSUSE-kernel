@@ -1284,8 +1284,7 @@ lpfc_hb_timeout_handler(struct lpfc_hba *phba)
 		/* Check outstanding IO count */
 		if (phba->cfg_enable_fc4_type & LPFC_ENABLE_NVME) {
 			if (phba->nvmet_support) {
-				tgtp = (struct lpfc_nvmet_tgtport *)
-					phba->targetport->private;
+				tgtp = phba->targetport->private;
 				/* Calculate outstanding IOs */
 				tot = atomic_read(&tgtp->rcv_fcp_cmd_drop);
 				tot += atomic_read(&tgtp->xmt_fcp_release);
@@ -3079,17 +3078,13 @@ lpfc_online(struct lpfc_hba *phba)
 		/* Reestablish the local initiator port.
 		 * The offline process destroyed the previous lport.
 		 */
-		if (phba->cfg_enable_fc4_type & LPFC_ENABLE_NVME) {
-			if (!phba->nvmet_support) {
-				error = lpfc_nvme_create_localport(phba->pport);
-				if (error) {
-					lpfc_printf_log(phba, KERN_ERR,
-							LOG_INIT,
-							"6132 NVME restore reg "
-							"failed on nvmei error "
-							"x%x\n", error);
-				}
-			}
+		if (phba->cfg_enable_fc4_type & LPFC_ENABLE_NVME &&
+				!phba->nvmet_support) {
+			error = lpfc_nvme_create_localport(phba->pport);
+			if (error)
+				lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+					"6132 NVME restore reg failed "
+					"on nvmei error x%x\n", error);
 		}
 	} else {
 		lpfc_sli_queue_init(phba);
@@ -3512,7 +3507,6 @@ lpfc_sli4_nvmet_sgl_update(struct lpfc_hba *phba)
 
 	/* For NVMET, ALL remaining XRIs are dedicated for IO processing */
 	nvmet_xri_cnt = phba->sli4_hba.max_cfg_param.max_xri - els_xri_cnt;
-
 	if (nvmet_xri_cnt > phba->sli4_hba.nvmet_xri_cnt) {
 		/* els xri-sgl expanded */
 		xri_cnt = nvmet_xri_cnt - phba->sli4_hba.nvmet_xri_cnt;

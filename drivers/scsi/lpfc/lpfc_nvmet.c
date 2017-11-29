@@ -165,6 +165,7 @@ out:
 void
 lpfc_nvmet_ctxbuf_post(struct lpfc_hba *phba, struct lpfc_nvmet_ctxbuf *ctx_buf)
 {
+#if (IS_ENABLED(CONFIG_NVME_TARGET_FC))
 	struct lpfc_nvmet_rcv_ctx *ctxp = ctx_buf->context;
 	struct lpfc_nvmet_tgtport *tgtp;
 	struct fc_frame_header *fc_hdr;
@@ -266,6 +267,7 @@ lpfc_nvmet_ctxbuf_post(struct lpfc_hba *phba, struct lpfc_nvmet_ctxbuf *ctx_buf)
 		return;
 	}
 	spin_unlock_irqrestore(&phba->sli4_hba.nvmet_io_wait_lock, iflag);
+
 	/*
 	 * Use the CPU context list, from the MRQ the IO was received on
 	 * (ctxp->idx), to save context structure.
@@ -276,6 +278,7 @@ lpfc_nvmet_ctxbuf_post(struct lpfc_hba *phba, struct lpfc_nvmet_ctxbuf *ctx_buf)
 	list_add_tail(&ctx_buf->list, &infop->nvmet_ctx_list);
 	infop->nvmet_ctx_list_cnt++;
 	spin_unlock_irqrestore(&infop->nvmet_ctx_list_lock, iflag);
+#endif
 }
 
 #ifdef CONFIG_SCSI_LPFC_DEBUG_FS
@@ -930,44 +933,49 @@ static struct nvmet_fc_target_template lpfc_tgttemplate = {
 };
 
 void
-lpfc_nvmet_cleanup_io_context(struct lpfc_hba *phba)
+__lpfc_nvmet_clean_io_for_cpu(struct lpfc_hba *phba,
+		struct lpfc_nvmet_ctx_info *infop)
 {
 	struct lpfc_nvmet_ctxbuf *ctx_buf, *next_ctx_buf;
+	unsigned long flags;
+
+	spin_lock_irqsave(&infop->nvmet_ctx_list_lock, flags);
+	list_for_each_entry_safe(ctx_buf, next_ctx_buf,
+				&infop->nvmet_ctx_list, list) {
+		spin_lock(&phba->sli4_hba.abts_nvme_buf_list_lock);
+		list_del_init(&ctx_buf->list);
+		spin_unlock(&phba->sli4_hba.abts_nvme_buf_list_lock);
+
+		__lpfc_clear_active_sglq(phba, ctx_buf->sglq->sli4_lxritag);
+		ctx_buf->sglq->state = SGL_FREED;
+		ctx_buf->sglq->ndlp = NULL;
+
+		spin_lock(&phba->sli4_hba.sgl_list_lock);
+		list_add_tail(&ctx_buf->sglq->list,
+				&phba->sli4_hba.lpfc_nvmet_sgl_list);
+		spin_unlock(&phba->sli4_hba.sgl_list_lock);
+
+		lpfc_sli_release_iocbq(phba, ctx_buf->iocbq);
+		kfree(ctx_buf->context);
+	}
+	spin_unlock_irqrestore(&infop->nvmet_ctx_list_lock, flags);
+}
+
+static void
+lpfc_nvmet_cleanup_io_context(struct lpfc_hba *phba)
+{
 	struct lpfc_nvmet_ctx_info *infop;
 	int i, j;
-	unsigned long flags;
 
 	/* The first context list, MRQ 0 CPU 0 */
 	infop = phba->sli4_hba.nvmet_ctx_info;
 	if (!infop)
 		return;
+
 	/* Cycle the the entire CPU context list for every MRQ */
 	for (i = 0; i < phba->cfg_nvmet_mrq; i++) {
 		for (j = 0; j < phba->sli4_hba.num_present_cpu; j++) {
-			spin_lock_irqsave(&infop->nvmet_ctx_list_lock, flags);
-			list_for_each_entry_safe(ctx_buf, next_ctx_buf,
-						 &infop->nvmet_ctx_list, list) {
-				spin_lock(
-				    &phba->sli4_hba.abts_nvme_buf_list_lock);
-				list_del_init(&ctx_buf->list);
-				spin_unlock(
-				    &phba->sli4_hba.abts_nvme_buf_list_lock);
-				__lpfc_clear_active_sglq(
-					phba, ctx_buf->sglq->sli4_lxritag);
-				ctx_buf->sglq->state = SGL_FREED;
-				ctx_buf->sglq->ndlp = NULL;
-
-				spin_lock(&phba->sli4_hba.sgl_list_lock);
-				list_add_tail(
-					&ctx_buf->sglq->list,
-					&phba->sli4_hba.lpfc_nvmet_sgl_list);
-				spin_unlock(&phba->sli4_hba.sgl_list_lock);
-
-				lpfc_sli_release_iocbq(phba, ctx_buf->iocbq);
-				kfree(ctx_buf->context);
-			}
-			spin_unlock_irqrestore(&infop->nvmet_ctx_list_lock,
-					       flags);
+			__lpfc_nvmet_clean_io_for_cpu(phba, infop);
 			infop++; /* next */
 		}
 	}
@@ -1030,7 +1038,7 @@ lpfc_nvmet_setup_io_context(struct lpfc_hba *phba)
 
 	/*
 	 * Setup the next CPU context info ptr for each MRQ.
-	 * MRQ 0 will cycle thru CPUs 0 - X seperately from
+	 * MRQ 0 will cycle thru CPUs 0 - X separately from
 	 * MRQ 1 cycling thru CPUs 0 - X, and so on.
 	 */
 	for (j = 0; j < phba->cfg_nvmet_mrq; j++) {
@@ -1531,9 +1539,8 @@ lpfc_nvmet_replenish_context(struct lpfc_hba *phba,
 
 		/* Just take the entire context list, if there are any */
 		if (get_infop->nvmet_ctx_list_cnt) {
-			list_splice(&get_infop->nvmet_ctx_list,
+			list_splice_init(&get_infop->nvmet_ctx_list,
 				    &current_infop->nvmet_ctx_list);
-			INIT_LIST_HEAD(&get_infop->nvmet_ctx_list);
 			current_infop->nvmet_ctx_list_cnt =
 				get_infop->nvmet_ctx_list_cnt - 1;
 			get_infop->nvmet_ctx_list_cnt = 0;

@@ -640,7 +640,6 @@ struct lpfc_sli4_hba {
 	uint16_t scsi_xri_start;
 	uint16_t els_xri_cnt;
 	uint16_t nvmet_xri_cnt;
-	uint16_t nvmet_ctx_cnt;
 	uint16_t nvmet_io_wait_cnt;
 	uint16_t nvmet_io_wait_total;
 	struct list_head lpfc_els_sgl_list;
