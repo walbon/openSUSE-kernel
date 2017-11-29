@@ -40,8 +40,6 @@
  * @node_name: FC WWNN for the port
  * @port_name: FC WWPN for the port
  * @port_role: What NVME roles are supported (see FC_PORT_ROLE_xxx)
- * @dev_loss_tmo: maximum delay for reconnects to an association on
- *             this device. Used only on a remoteport.
  *
  * Initialization values for dynamic port fields:
  * @port_id:      FC N_Port_ID currently assigned the port. Upper 8 bits must
@@ -52,7 +50,6 @@ struct nvme_fc_port_info {
 	u64			port_name;
 	u32			port_role;
 	u32			port_id;
-	u32			dev_loss_tmo;
 };
 
 
@@ -247,9 +244,6 @@ struct nvme_fc_local_port {
  *             The length of the buffer corresponds to the remote_priv_sz
  *             value specified in the nvme_fc_port_template supplied by
  *             the LLDD.
- * @dev_loss_tmo: maximum delay for reconnects to an association on
- *             this device. To modify, lldd must call
- *             nvme_fc_set_remoteport_devloss().
  *
  * Fields with dynamic values. Values may change base on link or login
  * state. LLDD may reference fields directly to change them. Initialized by
@@ -265,9 +259,10 @@ struct nvme_fc_remote_port {
 	u32 port_role;
 	u64 node_name;
 	u64 port_name;
+
 	struct nvme_fc_local_port *localport;
+
 	void *private;
-	u32 dev_loss_tmo;
 
 	/* dynamic fields */
 	u32 port_id;
@@ -456,10 +451,6 @@ int nvme_fc_register_remoteport(struct nvme_fc_local_port *localport,
 
 int nvme_fc_unregister_remoteport(struct nvme_fc_remote_port *remoteport);
 
-void nvme_fc_rescan_remoteport(struct nvme_fc_remote_port *remoteport);
-
-int nvme_fc_set_remoteport_devloss(struct nvme_fc_remote_port *remoteport,
-			u32 dev_loss_tmo);
 
 
 /*
@@ -633,7 +624,7 @@ struct nvmefc_tgt_fcp_req {
 	u32			timeout;
 	u32			transfer_length;
 	struct fc_ba_rjt	ba_rjt;
-	struct scatterlist	sg[NVME_FC_MAX_SEGMENTS];
+	struct scatterlist	*sg;
 	int			sg_cnt;
 	void			*rspaddr;
 	dma_addr_t		rspdma;
@@ -820,20 +811,6 @@ struct nvmet_fc_target_port {
  *       to the LLDD after all operations on the fcp operation are complete.
  *       This may be due to the command completing or upon completion of
  *       abort cleanup.
- *       Entrypoint is Mandatory.
- *
- * @queue_create:  Called by the transport to indicate the creation of an
- *       nvme queue and to allow the LLDD to allocate resources for the
- *       queue.
- *       Returns 0 on successful allocation of resources for the queue.
- *       -<errno> on failure.  Failure will result in failure of the
- *       FC-NVME Create Association or Create Connection LS's.
- *       Entrypoint is Optional.
- *
- * @queue_delete:  Called by the transport to indicate the deletion of an
- *       nvme queue and to allow the LLDD to de-allocate resources for the
- *       queue.
- *       Entrypoint is Optional.
  *
  * @max_hw_queues:  indicates the maximum number of hw queues the LLDD
  *       supports for cpu affinitization.
@@ -874,10 +851,6 @@ struct nvmet_fc_target_template {
 				struct nvmefc_tgt_fcp_req *fcpreq);
 	void (*fcp_req_release)(struct nvmet_fc_target_port *tgtport,
 				struct nvmefc_tgt_fcp_req *fcpreq);
-	int (*queue_create)(struct nvmet_fc_target_port *tgtport,
-				u64 connection_id, u16 qsize);
-	void (*queue_delete)(struct nvmet_fc_target_port *tgtport,
-				u64 connection_id, u16 qsize);
 
 	u32	max_hw_queues;
 	u16	max_sgl_segments;

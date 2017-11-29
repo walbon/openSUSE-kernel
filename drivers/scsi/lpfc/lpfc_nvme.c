@@ -2477,14 +2477,6 @@ lpfc_nvme_unregister_port(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 	if (ndlp->nlp_type & (NLP_NVME_TARGET | NLP_NVME_INITIATOR)) {
 		init_completion(&rport->rport_unreg_done);
 
-		if (vport->load_flag & FC_UNLOADING) {
-			/* Driver is unloading - clear devloss so that
-			 * the transport completes the rport unreg
-			 * immediately.
-			 */
-			nvme_fc_set_remoteport_devloss(remoteport, 0);
-		}
-
 		/* No concern about the role change on the nvme remoteport.
 		 * The transport will update it.
 		 */
