@@ -148,7 +148,7 @@ struct nvmet_fc_tgt_assoc {
 	u32				a_id;
 	struct nvmet_fc_tgtport		*tgtport;
 	struct list_head		a_list;
-	struct nvmet_fc_tgt_queue	*queues[NVMET_NR_QUEUES];
+	struct nvmet_fc_tgt_queue	*queues[NVMET_NR_QUEUES + 1];
 	struct kref			ref;
 };
 
@@ -532,15 +532,15 @@ nvmet_fc_free_fcp_iod(struct nvmet_fc_tgt_queue *queue,
 
 	tgtport->ops->fcp_req_release(&tgtport->fc_target_port, fcpreq);
 
+	/* release the queue lookup reference on the completed IO */
+	nvmet_fc_tgt_q_put(queue);
+
 	spin_lock_irqsave(&queue->qlock, flags);
 	deferfcp = list_first_entry_or_null(&queue->pending_cmd_list,
 				struct nvmet_fc_defer_fcp_req, req_list);
 	if (!deferfcp) {
 		list_add_tail(&fod->fcp_list, &fod->queue->fod_list);
 		spin_unlock_irqrestore(&queue->qlock, flags);
-
-		/* Release reference taken at queue lookup and fod allocation */
-		nvmet_fc_tgt_q_put(queue);
 		return;
 	}
 
@@ -608,7 +608,7 @@ nvmet_fc_alloc_target_queue(struct nvmet_fc_tgt_assoc *assoc,
 	unsigned long flags;
 	int ret;
 
-	if (qid >= NVMET_NR_QUEUES)
+	if (qid > NVMET_NR_QUEUES)
 		return NULL;
 
 	queue = kzalloc((sizeof(*queue) +
@@ -759,6 +759,9 @@ nvmet_fc_delete_target_queue(struct nvmet_fc_tgt_queue *queue)
 		tgtport->ops->fcp_req_release(&tgtport->fc_target_port,
 				deferfcp->fcp_req);
 
+		/* release the queue lookup reference */
+		nvmet_fc_tgt_q_put(queue);
+
 		kfree(deferfcp);
 
 		spin_lock_irqsave(&queue->qlock, flags);
@@ -888,7 +891,7 @@ nvmet_fc_delete_target_assoc(struct nvmet_fc_tgt_assoc *assoc)
 	int i;
 
 	spin_lock_irqsave(&tgtport->lock, flags);
-	for (i = NVMET_NR_QUEUES - 1; i >= 0; i--) {
+	for (i = NVMET_NR_QUEUES; i >= 0; i--) {
 		queue = assoc->queues[i];
 		if (queue) {
 			if (!nvmet_fc_tgt_q_get(queue))
