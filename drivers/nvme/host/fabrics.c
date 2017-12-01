@@ -591,7 +591,9 @@ static int nvmf_parse_options(struct nvmf_ctrl_options *opts,
 	opts->nr_io_queues = num_online_cpus();
 	opts->reconnect_delay = NVMF_DEF_RECONNECT_DELAY;
 	opts->kato = NVME_DEFAULT_KATO;
+#ifndef __GENKSYMS__
 	opts->duplicate_connect = false;
+#endif
 
 	options = o = kstrdup(buf, GFP_KERNEL);
 	if (!options)
@@ -767,9 +769,11 @@ static int nvmf_parse_options(struct nvmf_ctrl_options *opts,
 				goto out;
 			}
 			break;
+#ifndef __GENKSYMS__
 		case NVMF_OPT_DUP_CONNECT:
 			opts->duplicate_connect = true;
 			break;
+#endif
 		default:
 			pr_warn("unknown parameter or missing value '%s' in ctrl creation request\n",
 				p);

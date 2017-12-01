@@ -98,11 +98,13 @@ struct nvmf_ctrl_options {
 	unsigned int		nr_io_queues;
 	unsigned int		reconnect_delay;
 	bool			discovery_nqn;
-	bool			duplicate_connect;
 	unsigned int		kato;
 	struct nvmf_host	*host;
 	int			nr_reconnects;
 	int			max_reconnects;
+#ifndef __GENKSYMS__
+	bool			duplicate_connect;
+#endif
 };
 
 /*
