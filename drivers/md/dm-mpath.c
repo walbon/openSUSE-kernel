@@ -574,8 +574,6 @@ static int __multipath_map(struct dm_target *ti, struct request *clone,
 		if (IS_ERR(clone)) {
 			/* EBUSY, ENODEV or EWOULDBLOCK: requeue */
 			bool queue_dying = blk_queue_dying(q);
-			DMERR_LIMIT("blk_get_request() returned %ld%s - requeuing",
-				    PTR_ERR(clone), queue_dying ? " (path offline)" : "");
 			clear_request_fn_mpio(m, map_context);
 			if (queue_dying) {
 				atomic_inc(&m->pg_init_in_progress);
