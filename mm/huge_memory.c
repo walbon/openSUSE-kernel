@@ -711,7 +711,7 @@ __setup("transparent_hugepage=", setup_transparent_hugepage);
 pmd_t maybe_pmd_mkwrite(pmd_t pmd, struct vm_area_struct *vma)
 {
 	if (likely(vma->vm_flags & VM_WRITE))
-		pmd = pmd_mkwrite(pmd_mkdirty(pmd));
+		pmd = pmd_mkwrite(pmd);
 	return pmd;
 }
 
@@ -781,7 +781,7 @@ static int __do_huge_pmd_anonymous_page(struct mm_struct *mm,
 		}
 
 		entry = mk_huge_pmd(page, vma->vm_page_prot);
-		entry = maybe_pmd_mkwrite(entry, vma);
+		entry = maybe_pmd_mkwrite(pmd_mkdirty(entry), vma);
 		page_add_new_anon_rmap(page, vma, haddr);
 		mem_cgroup_commit_charge(page, memcg, false);
 		lru_cache_add_active_or_unevictable(page, vma);
@@ -2727,7 +2727,7 @@ static void collapse_huge_page(struct mm_struct *mm,
 	pgtable = pmd_pgtable(_pmd);
 
 	_pmd = mk_huge_pmd(new_page, vma->vm_page_prot);
-	_pmd = maybe_pmd_mkwrite(_pmd, vma);
+	_pmd = maybe_pmd_mkwrite(pmd_mkdirty(_pmd), vma);
 
 	/*
 	 * spin_lock() below is not the equivalent of smp_wmb(), so
