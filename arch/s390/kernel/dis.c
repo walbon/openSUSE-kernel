@@ -2024,7 +2024,7 @@ void show_code(struct pt_regs *regs)
 		start += opsize;
 		printk(buffer);
 		ptr = buffer;
-		ptr += sprintf(ptr, "\n\t  ");
+		ptr += sprintf(ptr, "\n          ");
 		hops++;
 	}
 	printk("\n");
