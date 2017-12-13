@@ -280,6 +280,8 @@ void __init kaiser_check_boottime_disable(void)
 skip:
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD)
 		goto disable;
+	if (static_cpu_has(X86_FEATURE_XENPV))
+		goto disable;
 
 enable:
 	if (enable)
