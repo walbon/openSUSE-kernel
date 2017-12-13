@@ -1,7 +1,9 @@
 #ifndef _LINUX_MMU_CONTEXT_H
 #define _LINUX_MMU_CONTEXT_H
 
+#ifndef __GENKSYMS__
 #include <asm/mmu_context.h>
+#endif
 
 struct mm_struct;
 

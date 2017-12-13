@@ -32,7 +32,11 @@
 #include <linux/init.h>
 #include <linux/uaccess.h>
 #include <linux/highmem.h>
+#ifndef __GENKSYMS__
 #include <linux/mmu_context.h>
+#else
+#include <asm/mmu_context.h>
+#endif
 #include <linux/interrupt.h>
 #include <linux/capability.h>
 #include <linux/completion.h>
