@@ -171,6 +171,34 @@ _PIF_WORK	= (_PIF_PER_TRAP)
 		tm	off+\addr, \mask
 	.endm
 
+	.macro BPOFF
+	.pushsection .altinstr_replacement, "ax"
+0:	.long	0xb2e8c000	# FIXME: PPA 12 correct ?
+	.popsection
+1:	.long	0x47000000
+	.pushsection .altnobp, "a"
+        .long 1b - .
+	.long 0b - .
+	.word 49		# FIXME: facility bit 49 correct ?
+	.byte 4
+	.byte 4
+	.popsection
+	.endm
+
+	.macro BPON
+	.pushsection .altinstr_replacement, "ax"
+0:	.long	0xb2e8d000	# FIXME: PPA 13 correct ?
+	.popsection
+1:	.long	0x47000000
+	.pushsection .altnobp, "a"
+        .long 1b - .
+	.long 0b - .
+	.word 49		# FIXME: facility bit 49 correct ?
+	.byte 4
+	.byte 4
+	.popsection
+	.endm
+
 	.section .kprobes.text, "ax"
 
 /*
@@ -310,7 +338,9 @@ ENTRY(system_call)
 	lgf	%r9,0(%r8,%r10)			# get system call add.
 	TSTMSK	__TI_flags(%r12),_TIF_TRACE
 	jnz	.Lsysc_tracesys
+	BPOFF
 	basr	%r14,%r9			# call sys_xxxx
+	BPON
 	stg	%r2,__PT_R2(%r11)		# store return value
 
 .Lsysc_return:
@@ -451,7 +481,9 @@ ENTRY(system_call)
 	lmg	%r3,%r7,__PT_R3(%r11)
 	stg	%r7,STACK_FRAME_OVERHEAD(%r15)
 	lg	%r2,__PT_ORIG_GPR2(%r11)
+	BPOFF
 	basr	%r14,%r9		# call sys_xxx
+	BPON
 	stg	%r2,__PT_R2(%r11)	# store return value
 .Lsysc_tracenogo:
 	TSTMSK	__TI_flags(%r12),_TIF_TRACE
