@@ -75,6 +75,7 @@ do {									\
 })
 
 #define smp_mb__before_spinlock()   smp_mb()
+#define gmb() asm volatile("ori 31,31,0");
 
 #include <asm-generic/barrier.h>
 
