@@ -1512,6 +1512,7 @@ qeth_l3_add_mc_to_hash(struct qeth_card *card, struct in_device *in4_dev)
 
 		tmp->u.a4.addr = im4->multiaddr;
 		memcpy(tmp->mac, buf, sizeof(tmp->mac));
+		tmp->is_multicast = 1;
 
 		ipm = qeth_l3_ip_from_hash(card, tmp);
 		if (ipm) {
@@ -1689,7 +1690,7 @@ static void qeth_l3_free_vlan_addresses4(struct qeth_card *card,
 
 	addr = qeth_l3_get_addr_buffer(QETH_PROT_IPV4);
 	if (!addr)
-		return;
+		goto out;
 
 	spin_lock_bh(&card->ip_lock);
 
@@ -1703,6 +1704,7 @@ static void qeth_l3_free_vlan_addresses4(struct qeth_card *card,
 	spin_unlock_bh(&card->ip_lock);
 
 	kfree(addr);
+out:
 	in_dev_put(in_dev);
 }
 
@@ -1727,7 +1729,7 @@ static void qeth_l3_free_vlan_addresses6(struct qeth_card *card,
 
 	addr = qeth_l3_get_addr_buffer(QETH_PROT_IPV6);
 	if (!addr)
-		return;
+		goto out;
 
 	spin_lock_bh(&card->ip_lock);
 
@@ -1742,6 +1744,7 @@ static void qeth_l3_free_vlan_addresses6(struct qeth_card *card,
 	spin_unlock_bh(&card->ip_lock);
 
 	kfree(addr);
+out:
 	in6_dev_put(in6_dev);
 #endif /* CONFIG_QETH_IPV6 */
 }
@@ -3256,6 +3259,8 @@ static int qeth_l3_probe_device(struct ccwgroup_device *gdev)
 	rc = qeth_l3_create_device_attributes(&gdev->dev);
 	if (rc)
 		return rc;
+	hash_init(card->ip_htable);
+	hash_init(card->ip_mc_htable);
 	card->options.layer2 = 0;
 	card->info.hwtrap = 0;
 	return 0;
