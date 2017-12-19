@@ -55,18 +55,15 @@ EXPORT_SYMBOL_GPL(stuff_RSB);
  */
 void x86_spec_check(void)
 {
-	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) {
-		if (cpuid_edx(7) & BIT(26)) {
-			ibrs_state = 1;
-			ibpb_state = 1;
+	if (cpuid_edx(7) & BIT(26)) {
+		ibrs_state = 1;
+		ibpb_state = 1;
 
-			setup_force_cpu_cap(X86_FEATURE_SPEC_CTRL);
-		}
-	} else if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
-		if (boot_cpu_has(X86_FEATURE_SPEC_CTRL))
-			ibrs_state = 1;
+		setup_force_cpu_cap(X86_FEATURE_SPEC_CTRL);
+	}
 
-		if (boot_cpu_has(X86_FEATURE_IBPB)) {
+	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
+		if (cpuid_ebx(0x80000008) & BIT(12)) {
 			ibpb_state = 1;
 		} else {
 			switch (boot_cpu_data.x86) {
@@ -77,6 +74,7 @@ void x86_spec_check(void)
 				msr_set_bit(MSR_F15H_IC_CFG, 14);
 				break;
 			}
+			ibpb_state = 0;
 		}
 	}
 }
