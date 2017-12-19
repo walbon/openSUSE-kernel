@@ -4,20 +4,7 @@
 #include <linux/earlycpio.h>
 #include <linux/initrd.h>
 
-#define native_rdmsr(msr, val1, val2)			\
-do {							\
-	u64 __val = native_read_msr((msr));		\
-	(void)((val1) = (u32)__val);			\
-	(void)((val2) = (u32)(__val >> 32));		\
-} while (0)
-
-#define native_wrmsr(msr, low, high)			\
-	native_write_msr(msr, low, high)
-
-#define native_wrmsrl(msr, val)				\
-	native_write_msr((msr),				\
-			 (u32)((u64)(val)),		\
-			 (u32)((u64)(val) >> 32))
+#include <asm/msr.h>
 
 struct cpu_signature {
 	unsigned int sig;
