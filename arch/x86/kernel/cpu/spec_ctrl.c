@@ -49,3 +49,19 @@ void stuff_RSB(void)
 	stuff_rsb();
 }
 EXPORT_SYMBOL_GPL(stuff_RSB);
+
+/*
+ * Called after upgrading microcode, check CPUID directly.
+ */
+void x86_spec_check(void)
+{
+	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) {
+		if (cpuid_edx(7) & BIT(26)) {
+			ibrs_state = 1;
+			ibpb_state = 1;
+
+			setup_force_cpu_cap(X86_FEATURE_SPEC_CTRL);
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(x86_spec_check);

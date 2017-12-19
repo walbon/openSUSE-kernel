@@ -16,6 +16,7 @@
 #include <asm/intel-family.h>
 #include <asm/hwcap2.h>
 #include <asm/elf.h>
+#include <asm/spec_ctrl.h>
 
 #ifdef CONFIG_X86_64
 #include <linux/topology.h>
@@ -560,6 +561,8 @@ static void init_intel(struct cpuinfo_x86 *c)
 		detect_vmx_virtcap(c);
 
 	probe_xeon_phi_r3mwait(c);
+
+	x86_spec_check();
 }
 
 #ifdef CONFIG_X86_32
