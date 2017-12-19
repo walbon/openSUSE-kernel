@@ -8652,7 +8652,7 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
 	atomic_switch_perf_msrs(vmx);
 
-	if (boot_cpu_has(X86_FEATURE_SPEC_CTRL))
+	if (x86_ibrs_enabled())
 		add_atomic_switch_msr(vmx, MSR_IA32_SPEC_CTRL,
 			vcpu->arch.spec_ctrl, FEATURE_ENABLE_IBRS);
 
