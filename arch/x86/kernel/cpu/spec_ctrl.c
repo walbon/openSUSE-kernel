@@ -12,12 +12,19 @@
  * Keep it open for more flags in case needed.
  */
 static unsigned int ibrs_state = 0;
+static unsigned int ibpb_state = 0;
 
 unsigned int notrace x86_ibrs_enabled(void)
 {
 	return ibrs_state;
 }
 EXPORT_SYMBOL_GPL(x86_ibrs_enabled);
+
+unsigned int notrace x86_ibpb_enabled(void)
+{
+	return ibpb_state;
+}
+EXPORT_SYMBOL_GPL(x86_ibpb_enabled);
 
 void x86_disable_ibrs(void)
 {

@@ -95,10 +95,11 @@ void x86_enable_ibrs(void);
 void x86_disable_ibrs(void);
 void stuff_RSB(void);
 unsigned int x86_ibrs_enabled(void);
+unsigned int x86_ibpb_enabled(void);
 
 static inline void x86_ibp_barrier(void)
 {
-	if (static_cpu_has(X86_FEATURE_SPEC_CTRL))
+	if (x86_ibpb_enabled())
 		native_wrmsrl(MSR_IA32_PRED_CMD, FEATURE_SET_IBPB);
 }
 
