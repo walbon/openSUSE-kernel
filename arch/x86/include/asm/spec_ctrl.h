@@ -53,5 +53,12 @@
 #else /* __ASSEMBLY__ */
 void x86_enable_ibrs(void);
 void x86_disable_ibrs(void);
+
+static inline void x86_ibp_barrier(void)
+{
+	if (static_cpu_has(X86_FEATURE_SPEC_CTRL))
+		native_wrmsrl(MSR_IA32_PRED_CMD, FEATURE_SET_IBPB);
+}
+
 #endif /* __ASSEMBLY__ */
 #endif /* _ASM_X86_SPEC_CTRL_H */
