@@ -257,7 +257,7 @@ void __init kaiser_check_boottime_disable(void)
 	bool enable = true;
 	char arg[5];
 
-	if (cmdline_find_option(boot_command_line, "kaiser", arg, sizeof(arg))) {
+	if (cmdline_find_option(boot_command_line, "pti", arg, sizeof(arg))) {
 		if (!strncmp(arg, "on", 2))
 			goto enable;
 
@@ -268,7 +268,7 @@ void __init kaiser_check_boottime_disable(void)
 			goto skip;
 	}
 
-	if (cmdline_find_option_bool(boot_command_line, "nokaiser"))
+	if (cmdline_find_option_bool(boot_command_line, "nopti"))
 		goto disable;
 
 skip:
