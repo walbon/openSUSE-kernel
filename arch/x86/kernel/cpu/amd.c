@@ -12,6 +12,7 @@
 #include <asm/smp.h>
 #include <asm/pci-direct.h>
 #include <asm/delay.h>
+#include <asm/spec_ctrl.h>
 
 #ifdef CONFIG_X86_64
 # include <asm/mmconfig.h>
@@ -789,6 +790,8 @@ static void init_amd(struct cpuinfo_x86 *c)
 
 	/* AMD CPUs don't reset SS attributes on SYSRET */
 	set_cpu_bug(c, X86_BUG_SYSRET_SS_ATTRS);
+
+	x86_spec_check();
 }
 
 #ifdef CONFIG_X86_32

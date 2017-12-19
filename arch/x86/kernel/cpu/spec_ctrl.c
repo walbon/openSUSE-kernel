@@ -62,6 +62,22 @@ void x86_spec_check(void)
 
 			setup_force_cpu_cap(X86_FEATURE_SPEC_CTRL);
 		}
+	} else if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
+		if (boot_cpu_has(X86_FEATURE_SPEC_CTRL))
+			ibrs_state = 1;
+
+		if (boot_cpu_has(X86_FEATURE_IBPB)) {
+			ibpb_state = 1;
+		} else {
+			switch (boot_cpu_data.x86) {
+			case 0x10:
+			case 0x12:
+			case 0x16:
+				pr_info_once("Disabling indirect branch predictor support\n");
+				msr_set_bit(MSR_F15H_IC_CFG, 14);
+				break;
+			}
+		}
 	}
 }
 EXPORT_SYMBOL_GPL(x86_spec_check);
