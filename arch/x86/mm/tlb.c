@@ -7,6 +7,7 @@
 #include <linux/module.h>
 #include <linux/cpu.h>
 #include <linux/debugfs.h>
+#include <linux/ptrace.h>
 
 #include <asm/tlbflush.h>
 #include <asm/mmu_context.h>
@@ -105,7 +106,10 @@ void switch_mm_irqs_off(struct mm_struct *prev, struct mm_struct *next,
 	unsigned cpu = smp_processor_id();
 
 	if (likely(prev != next)) {
-		x86_ibp_barrier();
+
+		/* Null tsk means switching to kernel, so that's safe */
+		if (tsk && ___ptrace_may_access(tsk, current, PTRACE_MODE_IBPB))
+			x86_ibp_barrier();
 
 		this_cpu_write(cpu_tlbstate.state, TLBSTATE_OK);
 		this_cpu_write(cpu_tlbstate.active_mm, next);
