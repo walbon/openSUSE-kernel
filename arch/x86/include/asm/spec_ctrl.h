@@ -57,6 +57,7 @@
 #else /* __ASSEMBLY__ */
 void x86_enable_ibrs(void);
 void x86_disable_ibrs(void);
+void stuff_RSB(void);
 
 static inline void x86_ibp_barrier(void)
 {

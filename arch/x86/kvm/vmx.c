@@ -49,6 +49,7 @@
 #include <asm/apic.h>
 #include <asm/irq_remapping.h>
 #include <asm/spec_ctrl.h>
+#include <asm/proto.h>
 
 #include "trace.h"
 #include "pmu.h"
@@ -8762,6 +8763,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		, "eax", "ebx", "edi", "esi"
 #endif
 	      );
+
+	stuff_RSB();
 
 	/* MSR_IA32_DEBUGCTLMSR is zeroed on vmexit. Restore it if needed */
 	if (debugctlmsr)
