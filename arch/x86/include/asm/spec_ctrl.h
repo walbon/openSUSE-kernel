@@ -50,5 +50,8 @@
 .Lend_\@:
 .endm
 
+#else /* __ASSEMBLY__ */
+void x86_enable_ibrs(void);
+void x86_disable_ibrs(void);
 #endif /* __ASSEMBLY__ */
 #endif /* _ASM_X86_SPEC_CTRL_H */
