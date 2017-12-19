@@ -2521,6 +2521,12 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 	nosmep		[X86]
 			Disable SMEP (Supervisor Mode Execution Prevention)
 			even if it is supported by processor.
+			
+	nospec		[X86]
+			Disable indirect branch restricted speculation and
+			indirect branch prediction barrier to avoid performance
+			penalties in trusted environments.
+
 
 	noexec32	[X86-64]
 			This affects only 32-bit executables.
