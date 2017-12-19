@@ -8650,6 +8650,11 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		__write_pkru(vmx->guest_pkru);
 
 	atomic_switch_perf_msrs(vmx);
+
+	if (boot_cpu_has(X86_FEATURE_SPEC_CTRL))
+		add_atomic_switch_msr(vmx, MSR_IA32_SPEC_CTRL,
+			vcpu->arch.spec_ctrl, FEATURE_ENABLE_IBRS);
+
 	debugctlmsr = get_debugctlmsr();
 
 	vmx->__launched = vmx->loaded_vmcs->launched;
