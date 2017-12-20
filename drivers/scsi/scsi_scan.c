@@ -794,6 +794,12 @@ scsi_test_lun(struct scsi_device *sdev)
 			SCSI_LOG_SCAN_BUS(3, sdev_printk(KERN_INFO, sdev,
 				"scsi_scan: tur returned %02x/%02x/%02x\n",
 				sshdr.sense_key, sshdr.asc, sshdr.ascq));
+			if (sshdr.sense_key == ILLEGAL_REQUEST &&
+			    sshdr.asc == 0x25) {
+				/* Logical Unit not supported */
+				res = SCSI_SCAN_LUN_PRESENT;
+				break;
+			}
 			if (sshdr.sense_key == NOT_READY &&
 			    sshdr.asc == 0x04 && sshdr.ascq == 0x01) {
 				/* Logical Unit is in process
