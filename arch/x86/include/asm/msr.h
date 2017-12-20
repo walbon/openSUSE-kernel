@@ -147,8 +147,7 @@ static __always_inline unsigned long long rdtsc_ordered(void)
 	 * that some other imaginary CPU is updating continuously with a
 	 * time stamp.
 	 */
-	alternative_2("", "mfence", X86_FEATURE_MFENCE_RDTSC,
-			  "lfence", X86_FEATURE_LFENCE_RDTSC);
+	alternative("", "lfence", X86_FEATURE_LFENCE_RDTSC);
 	return rdtsc();
 }
 
@@ -162,6 +161,21 @@ static inline unsigned long long native_read_pmc(int counter)
 	asm volatile("rdpmc" : EAX_EDX_RET(val, low, high) : "c" (counter));
 	return EAX_EDX_VAL(val, low, high);
 }
+
+#define native_rdmsr(msr, val1, val2)			\
+do {							\
+	u64 __val = native_read_msr((msr));		\
+	(void)((val1) = (u32)__val);			\
+	(void)((val2) = (u32)(__val >> 32));		\
+} while (0)
+
+#define native_wrmsr(msr, low, high)			\
+	native_write_msr(msr, low, high)
+
+#define native_wrmsrl(msr, val)				\
+	native_write_msr((msr),				\
+			 (u32)((u64)(val)),		\
+			 (u32)((u64)(val) >> 32))
 
 #ifdef CONFIG_PARAVIRT
 #include <asm/paravirt.h>

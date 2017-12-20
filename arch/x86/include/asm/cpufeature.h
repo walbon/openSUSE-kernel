@@ -92,7 +92,7 @@
 #define X86_FEATURE_SYSCALL32	( 3*32+14) /* "" syscall in ia32 userspace */
 #define X86_FEATURE_SYSENTER32	( 3*32+15) /* "" sysenter in ia32 userspace */
 #define X86_FEATURE_REP_GOOD	( 3*32+16) /* rep microcode works well */
-#define X86_FEATURE_MFENCE_RDTSC ( 3*32+17) /* "" Mfence synchronizes RDTSC */
+/* free, was #define X86_FEATURE_MFENCE_RDTSC ( 3*32+17) * "" Mfence synchronizes RDTSC */
 #define X86_FEATURE_LFENCE_RDTSC ( 3*32+18) /* "" Lfence synchronizes RDTSC */
 /* free, was #define X86_FEATURE_11AP	( 3*32+19) * "" Bad local APIC aka 11AP */
 #define X86_FEATURE_NOPL	( 3*32+20) /* The NOPL (0F 1F) instructions */
@@ -203,6 +203,7 @@
 #define X86_FEATURE_INTEL_PT	( 7*32+15) /* Intel Processor Trace */
 #define X86_FEATURE_AVX512_4VNNIW (7*32+16) /* AVX-512 Neural Network Instructions */
 #define X86_FEATURE_AVX512_4FMAPS (7*32+17) /* AVX-512 Multiply Accumulation Single precision */
+#define X86_FEATURE_SPEC_CTRL	( 7*32+19) /* Control Speculation Control */
 
 /* Because the ALTERNATIVE scheme is for members of the X86_FEATURE club... */
 #define X86_FEATURE_KAISER	( 7*32+31) /* CONFIG_KAISER w/o nokaiser */
@@ -271,6 +272,7 @@
 /* AMD-defined CPU features, CPUID level 0x80000008 (ebx), word 13 */
 #define X86_FEATURE_CLZERO	(13*32+0) /* CLZERO instruction */
 #define X86_FEATURE_IRPERF	(13*32+1) /* Instructions Retired Count */
+#define X86_FEATURE_IBPB       (13*32+12) /* Indirect Branch Prediction Barrier */
 
 /* Intel-defined CPU features, CPUID level 0x00000007:0 (ecx), word 16 */
 #define X86_FEATURE_PKU		(16*32+ 3) /* Protection Keys for Userspace */

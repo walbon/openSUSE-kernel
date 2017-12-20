@@ -36,6 +36,7 @@
 #include <asm/smap.h>
 #include <asm/pgtable_types.h>
 #include <asm/kaiser.h>
+#include <asm/spec_ctrl.h>
 #include <linux/err.h>
 
 /* Avoid __ASSEMBLER__'ifying <linux/audit.h> just for this.  */
@@ -173,6 +174,9 @@ GLOBAL(entry_SYSCALL_64_after_swapgs)
 	pushq	%r11				/* pt_regs->r11 */
 	sub	$(6*8), %rsp			/* pt_regs->bp, bx, r12-15 not saved */
 
+	ENABLE_IBRS
+	STUFF_RSB
+
 	testl	$_TIF_WORK_SYSCALL_ENTRY, ASM_THREAD_INFO(TI_flags, %rsp, SIZEOF_PTREGS)
 	jnz	tracesys
 entry_SYSCALL_64_fastpath:
@@ -211,6 +215,9 @@ entry_SYSCALL_64_fastpath:
 
 	movq	RIP(%rsp), %rcx
 	movq	EFLAGS(%rsp), %r11
+
+	DISABLE_IBRS
+
 	RESTORE_C_REGS_EXCEPT_RCX_R11
 	/*
 	 * This opens a window where we have a user CR3, but are
@@ -355,6 +362,8 @@ GLOBAL(int_ret_from_sys_call)
 	 * perf profiles. Nothing jumps here.
 	 */
 syscall_return_via_sysret:
+	DISABLE_IBRS
+
 	/* rcx and r11 are already restored (see code above) */
 	RESTORE_C_REGS_EXCEPT_RCX_R11
 	/*
@@ -369,6 +378,8 @@ syscall_return_via_sysret:
 	USERGS_SYSRET64
 
 opportunistic_sysret_failed:
+	DISABLE_IBRS
+
 	/*
 	 * This opens a window where we have a user CR3, but are
 	 * running in the kernel.  This makes using the CS
@@ -527,6 +538,8 @@ END(irq_entries_start)
 	SAVE_C_REGS
 	SAVE_EXTRA_REGS
 
+	STUFF_RSB
+
 	testb	$3, CS(%rsp)
 	jz	1f
 
@@ -536,6 +549,7 @@ END(irq_entries_start)
 	 */
 	SWAPGS
 	SWITCH_KERNEL_CR3
+	ENABLE_IBRS
 
 	/*
 	 * We need to tell lockdep that IRQs are off.  We can't do this until
@@ -593,6 +607,7 @@ GLOBAL(retint_user)
 	mov	%rsp,%rdi
 	call	prepare_exit_to_usermode
 	TRACE_IRQS_IRETQ
+	DISABLE_IBRS
 	SWITCH_USER_CR3
 	SWAPGS
 	jmp	restore_regs_and_iret
@@ -1065,6 +1080,10 @@ ENTRY(paranoid_entry)
 	cld
 	SAVE_C_REGS 8
 	SAVE_EXTRA_REGS 8
+
+	/* Do the stuffing unconditionally from user/kernel to be safe */
+	STUFF_RSB
+
 	movl	$1, %ebx
 	movl	$MSR_GS_BASE, %ecx
 	rdmsr
@@ -1091,6 +1110,7 @@ ENTRY(paranoid_entry)
 	movq	%rax, %cr3
 2:
 #endif
+	ENABLE_IBRS
 	ret
 END(paranoid_entry)
 
@@ -1113,6 +1133,7 @@ ENTRY(paranoid_exit)
 	DISABLE_INTERRUPTS(CLBR_NONE)
 	TRACE_IRQS_OFF_DEBUG
 	TRACE_IRQS_IRETQ_DEBUG
+	DISABLE_IBRS
 #ifdef CONFIG_KAISER
 	/* No ALTERNATIVE for X86_FEATURE_KAISER: paranoid_entry sets %ebx */
 	testl	$2, %ebx			/* SWITCH_USER_CR3 needed? */
@@ -1138,6 +1159,9 @@ ENTRY(error_entry)
 	cld
 	SAVE_C_REGS 8
 	SAVE_EXTRA_REGS 8
+
+	STUFF_RSB
+
 	/*
 	 * error_entry() always returns with a kernel gsbase and
 	 * CR3.  We must also have a kernel CR3/gsbase before
@@ -1155,6 +1179,8 @@ ENTRY(error_entry)
 	 * from user mode due to an IRET fault.
 	 */
 	SWAPGS
+
+	ENABLE_IBRS
 
 .Lerror_entry_from_usermode_after_swapgs:
 	/*
@@ -1200,6 +1226,7 @@ ENTRY(error_entry)
 	/* fall through */
 
 .Lerror_bad_iret:
+	ENABLE_IBRS_CLOBBER
 	/*
 	 * We came from an IRET to user mode, so we have user gsbase.
 	 * Switch to kernel gsbase:
@@ -1354,7 +1381,12 @@ ENTRY(nmi)
 	movq	%rax, %cr3
 2:
 #endif
+
+	ENABLE_IBRS
+
 	call	do_nmi
+
+	DISABLE_IBRS
 
 #ifdef CONFIG_KAISER
 	/*
@@ -1646,3 +1678,73 @@ ENTRY(ignore_sysret)
 	mov	$-ENOSYS, %eax
 	sysret
 END(ignore_sysret)
+
+ENTRY(stuff_rsb)
+	call	1f
+	pause
+1:	call	2f
+	pause
+2:	call	3f;
+	pause
+3:	call	4f
+	pause
+4:	call	5f
+	pause
+5:	call	6f
+	pause
+6:	call	7f
+	pause
+7:	call	8f
+	pause
+8:	call	9f
+	pause
+9:	call	10f
+	pause
+10:	call	11f
+	pause
+11:	call	12f
+	pause
+12:	call	13f
+	pause
+13:	call	14f
+	pause
+14:	call	15f
+	pause
+15:	call	16f
+	pause
+16:	call	17f
+	pause
+17:	call	18f
+	pause
+18:	call	19f
+	pause
+19:	call	20f
+	pause
+20:	call	21f
+	pause
+21:	call	22f
+	pause
+22:	call	23f
+	pause
+23:	call	24f
+	pause
+24:	call	25f
+	pause
+25:	call	26f
+	pause
+26:	call	27f
+	pause
+27:	call	28f
+	pause
+28:	call	29f
+	pause
+29:	call	30f
+	pause
+30:	call	31f
+	pause
+31:	call	32f
+	pause
+32:
+	add $(32*8), %rsp
+	ret
+END(stuff_rsb)

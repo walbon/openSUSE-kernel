@@ -426,11 +426,16 @@ static void mwait_idle(void)
 			smp_mb(); /* quirk */
 		}
 
+		x86_disable_ibrs();
+
 		__monitor((void *)&current_thread_info()->flags, 0, 0);
 		if (!need_resched())
 			__sti_mwait(0, 0);
 		else
 			local_irq_enable();
+
+		x86_enable_ibrs();
+
 		trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, smp_processor_id());
 	} else {
 		local_irq_enable();
