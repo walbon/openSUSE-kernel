@@ -40,8 +40,8 @@
 #define AEN_CMDID_BASE		(NVME_FC_AQ_BLKMQ_DEPTH + 1)
 
 enum nvme_fc_queue_flags {
-	NVME_FC_Q_CONNECTED = (1 << 0),
-	NVME_FC_Q_LIVE = (1 << 1),
+	NVME_FC_Q_CONNECTED = 0,
+	NVME_FC_Q_LIVE,
 };
 
 #define NVMEFC_QUEUE_DELAY	3		/* ms units */
