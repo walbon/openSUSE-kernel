@@ -144,7 +144,7 @@ int copy_thread(unsigned long clone_flags, unsigned long new_stackp,
 	ti->user_timer = 0;
 	ti->system_timer = 0;
 
-	frame->sf.back_chain = 0;
+	memset(&frame->sf, 0, sizeof(frame->sf));
 	/* new return point is ret_from_fork */
 	frame->sf.gprs[8] = (unsigned long) ret_from_fork;
 	/* fake return stack for resume(), don't go back to schedule */

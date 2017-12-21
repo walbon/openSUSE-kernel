@@ -18,12 +18,14 @@
 #define CIF_NOHZ_DELAY		2	/* delay HZ disable for a tick */
 #define CIF_FPU			3	/* restore FPU registers */
 #define CIF_IGNORE_IRQ		4	/* ignore interrupt (for udelay) */
+#define CIF_NOBP		5	/* BP is disabled */
 
 #define _CIF_MCCK_PENDING	_BITUL(CIF_MCCK_PENDING)
 #define _CIF_ASCE		_BITUL(CIF_ASCE)
 #define _CIF_NOHZ_DELAY		_BITUL(CIF_NOHZ_DELAY)
 #define _CIF_FPU		_BITUL(CIF_FPU)
 #define _CIF_IGNORE_IRQ		_BITUL(CIF_IGNORE_IRQ)
+#define _CIF_NOBP		_BITUL(CIF_NOBP)
 
 #ifndef __ASSEMBLY__
 

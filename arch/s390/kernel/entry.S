@@ -171,6 +171,36 @@ _PIF_WORK	= (_PIF_PER_TRAP)
 		tm	off+\addr, \mask
 	.endm
 
+	.macro BPOFF
+	oi	__LC_CPU_FLAGS+7,_CIF_NOBP
+	.pushsection .altinstr_replacement, "ax"
+660:	.long	0xb2e8c000
+	.popsection
+661:	.long	0x47000000
+	.pushsection .altnobp, "a"
+	.long 661b - .
+	.long 660b - .
+	.word 82
+	.byte 4
+	.byte 4
+	.popsection
+	.endm
+
+	.macro BPON
+	ni	__LC_CPU_FLAGS+7,255-_CIF_NOBP
+	.pushsection .altinstr_replacement, "ax"
+662:	.long	0xb2e8d000
+	.popsection
+663:	.long	0x47000000
+	.pushsection .altnobp, "a"
+	.long 663b - .
+	.long 662b - .
+	.word 82
+	.byte 4
+	.byte 4
+	.popsection
+	.endm
+
 	.section .kprobes.text, "ax"
 
 /*
@@ -182,20 +212,26 @@ _PIF_WORK	= (_PIF_PER_TRAP)
  */
 ENTRY(__switch_to)
 	stmg	%r6,%r15,__SF_GPRS(%r15)	# store gprs of prev task
-	lgr	%r1,%r2
-	aghi	%r1,__TASK_thread		# thread_struct of prev task
-	lg	%r4,__TASK_thread_info(%r2)	# get thread_info of prev
+	lghi	%r1,__TASK_thread
 	lg	%r5,__TASK_thread_info(%r3)	# get thread_info of next
-	stg	%r15,__THREAD_ksp(%r1)		# store kernel stack of prev
-	lgr	%r1,%r3
-	aghi	%r1,__TASK_thread		# thread_struct of next task
-	lgr	%r15,%r5
-	aghi	%r15,STACK_INIT			# end of kernel stack of next
-	stg	%r3,__LC_CURRENT		# store task struct of next
 	stg	%r5,__LC_THREAD_INFO		# store thread info of next
-	stg	%r15,__LC_KERNEL_STACK		# store end of kernel stack
-	lg	%r15,__THREAD_ksp(%r1)		# load kernel stack of next
-	/* c4 is used in guest detection: arch/s390/kernel/perf_cpum_sf.c */
+	aghi	%r5,STACK_INIT			# end of kernel stack of next
+	stg	%r3,__LC_CURRENT		# store task struct of next
+	stg	%r5,__LC_KERNEL_STACK		# store end of kernel stack
+	lghi	%r4,_CIF_NOBP
+	ng	%r4,__LC_CPU_FLAGS
+	stg	%r4,__SF_EMPTY(%r15)
+	stg	%r15,__THREAD_ksp(%r1,%r2)	# store kernel stack of prev
+	lg	%r15,__THREAD_ksp(%r1,%r3)	# load kernel stack of next
+	jz	0f
+	TSTMSK	__SF_EMPTY(%r15),_CIF_NOBP
+	jnz	1f
+	BPON
+	j	1f
+0:	TSTMSK	__SF_EMPTY(%r15),_CIF_NOBP
+	jz	1f
+	BPOFF
+1:	/* c4 is used in guest detection: arch/s390/kernel/perf_cpum_sf.c */
 	lctl	%c4,%c4,__TASK_pid(%r3)		# load pid to control reg. 4
 	mvc	__LC_CURRENT_PID(4,%r0),__TASK_pid(%r3) # store pid of next
 	lmg	%r6,%r15,__SF_GPRS(%r15)	# load gprs of next task
@@ -227,6 +263,7 @@ ENTRY(sie64a)
 	jz	.Lsie_gmap
 	lctlg	%c1,%c1,__GMAP_ASCE(%r14)	# load primary asce
 .Lsie_gmap:
+	BPON
 	lg	%r14,__SF_EMPTY(%r15)		# get control block pointer
 	oi	__SIE_PROG0C+3(%r14),1		# we are going into SIE now
 	tm	__SIE_PROG20+3(%r14),3		# last exit...
@@ -236,6 +273,7 @@ ENTRY(sie64a)
 	sie	0(%r14)
 .Lsie_skip:
 	ni	__SIE_PROG0C+3(%r14),0xfe	# no longer in SIE
+	BPOFF
 	lctlg	%c1,%c1,__LC_USER_ASCE		# load primary asce
 .Lsie_done:
 # some program checks are suppressing. C code (e.g. do_protection_exception)
@@ -291,6 +329,7 @@ ENTRY(system_call)
 	mvc	__PT_PSW(16,%r11),__LC_SVC_OLD_PSW
 	mvc	__PT_INT_CODE(4,%r11),__LC_SVC_ILC
 	stg	%r14,__PT_FLAGS(%r11)
+	BPOFF
 .Lsysc_do_svc:
 	HANDLE_KGRAFT %r12
 	lg	%r10,__TI_sysc_table(%r12)	# address of system call table
@@ -322,6 +361,8 @@ ENTRY(system_call)
 	jnz	.Lsysc_work			# check for work
 	TSTMSK	__LC_CPU_FLAGS,_CIF_WORK
 	jnz	.Lsysc_work
+.Lsysc_bpon:
+	BPON
 .Lsysc_restore:
 	lg	%r14,__LC_VDSO_PER_CPU
 	lmg	%r0,%r10,__PT_R0(%r11)
@@ -513,8 +554,9 @@ ENTRY(pgm_check_handler)
 	aghi	%r14,__TASK_thread	# pointer to thread_struct
 	lghi	%r13,__LC_PGM_TDB
 	tm	__LC_PGM_ILC+2,0x02	# check for transaction abort
-	jz	3f
+	jz	5f
 	mvc	__THREAD_trap_tdb(256,%r14),0(%r13)
+5:	BPOFF
 3:	la	%r11,STACK_FRAME_OVERHEAD(%r15)
 	stmg	%r0,%r7,__PT_R0(%r11)
 	mvc	__PT_R8(64,%r11),__LC_SAVE_AREA_SYNC
@@ -578,12 +620,18 @@ ENTRY(io_int_handler)
 	lg	%r12,__LC_THREAD_INFO
 	larl	%r13,cleanup_critical
 	lmg	%r8,%r9,__LC_IO_OLD_PSW
+	lghi    %r10,0
+	TSTMSK	__LC_CPU_FLAGS,_CIF_NOBP
+	jno	.Lio_bpon
+	lghi	%r10,_PIF_NOBP
+	BPON
+.Lio_bpon:
 	SWITCH_ASYNC __LC_SAVE_AREA_ASYNC,__LC_ASYNC_ENTER_TIMER
 	stmg	%r0,%r7,__PT_R0(%r11)
 	mvc	__PT_R8(64,%r11),__LC_SAVE_AREA_ASYNC
 	stmg	%r8,%r9,__PT_PSW(%r11)
 	mvc	__PT_INT_CODE(12,%r11),__LC_SUBCHANNEL_ID
-	xc	__PT_FLAGS(8,%r11),__PT_FLAGS(%r11)
+	stg	%r10,__PT_FLAGS(%r11)
 	TSTMSK	__LC_CPU_FLAGS,_CIF_IGNORE_IRQ
 	jo	.Lio_restore
 	TRACE_IRQS_OFF
@@ -611,6 +659,10 @@ ENTRY(io_int_handler)
 	TSTMSK	__LC_CPU_FLAGS,_CIF_WORK
 	jnz	.Lio_work
 .Lio_restore:
+	TSTMSK	__PT_FLAGS(%r11),_PIF_NOBP
+	jno	.Lio_bpoff
+	BPOFF
+.Lio_bpoff:
 	lg	%r14,__LC_VDSO_PER_CPU
 	lmg	%r0,%r10,__PT_R0(%r11)
 	mvc	__LC_RETURN_PSW(16),__PT_PSW(%r11)
@@ -754,6 +806,12 @@ ENTRY(ext_int_handler)
 	lg	%r12,__LC_THREAD_INFO
 	larl	%r13,cleanup_critical
 	lmg	%r8,%r9,__LC_EXT_OLD_PSW
+	lghi	%r10,0
+	TSTMSK	__LC_CPU_FLAGS,_CIF_NOBP
+	jno	.Lext_bpon
+	lghi	%r10,_PIF_NOBP
+	BPON
+.Lext_bpon:
 	SWITCH_ASYNC __LC_SAVE_AREA_ASYNC,__LC_ASYNC_ENTER_TIMER
 	stmg	%r0,%r7,__PT_R0(%r11)
 	mvc	__PT_R8(64,%r11),__LC_SAVE_AREA_ASYNC
@@ -762,7 +820,7 @@ ENTRY(ext_int_handler)
 	mvc	__PT_INT_CODE(4,%r11),__LC_EXT_CPU_ADDR
 	mvc	__PT_INT_PARM(4,%r11),__LC_EXT_PARAMS
 	mvc	__PT_INT_PARM_LONG(8,%r11),0(%r1)
-	xc	__PT_FLAGS(8,%r11),__PT_FLAGS(%r11)
+	stg	%r10,__PT_FLAGS(%r11)
 	TSTMSK	__LC_CPU_FLAGS,_CIF_IGNORE_IRQ
 	jo	.Lio_restore
 	TRACE_IRQS_OFF
@@ -898,6 +956,12 @@ ENTRY(mcck_int_handler)
 	lg	%r12,__LC_THREAD_INFO
 	larl	%r13,cleanup_critical
 	lmg	%r8,%r9,__LC_MCK_OLD_PSW
+	lghi    %r10,0
+	TSTMSK	__LC_CPU_FLAGS,_CIF_NOBP
+	jno	.Lmcck_bpon
+	lghi	%r10,_PIF_NOBP
+	BPON
+.Lmcck_bpon:
 	TSTMSK	__LC_MCCK_CODE,MCCK_CODE_SYSTEM_DAMAGE
 	jo	.Lmcck_panic		# yes -> rest of mcck code invalid
 	lghi	%r14,__LC_CPU_TIMER_SAVE_AREA
@@ -924,7 +988,7 @@ ENTRY(mcck_int_handler)
 	stmg	%r0,%r7,__PT_R0(%r11)
 	mvc	__PT_R8(64,%r11),0(%r14)
 	stmg	%r8,%r9,__PT_PSW(%r11)
-	xc	__PT_FLAGS(8,%r11),__PT_FLAGS(%r11)
+	stg	%r10,__PT_FLAGS(%r11)
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	lgr	%r2,%r11		# pass pointer to pt_regs
 	brasl	%r14,s390_do_machine_check
@@ -942,6 +1006,10 @@ ENTRY(mcck_int_handler)
 	brasl	%r14,s390_handle_mcck
 	TRACE_IRQS_ON
 .Lmcck_return:
+	TSTMSK	__PT_FLAGS(%r11),_PIF_NOBP
+	jno	.Lmcck_bpoff
+	BPOFF
+.Lmcck_bpoff:
 	lg	%r14,__LC_VDSO_PER_CPU
 	lmg	%r0,%r10,__PT_R0(%r11)
 	mvc	__LC_RETURN_MCCK_PSW(16),__PT_PSW(%r11) # move return PSW
@@ -1020,27 +1088,29 @@ cleanup_critical:
 	jl	.Lcleanup_system_call
 	clg	%r9,BASED(.Lcleanup_table+16)	# .Lsysc_tif
 	jl	0f
-	clg	%r9,BASED(.Lcleanup_table+24)	# .Lsysc_restore
+	clg	%r9,BASED(.Lcleanup_table+24)	# .Lsysc_bpon
 	jl	.Lcleanup_sysc_tif
-	clg	%r9,BASED(.Lcleanup_table+32)	# .Lsysc_done
+	clg	%r9,BASED(.Lcleanup_table+32)	# .Lsysc_restore
+	jl	.Lcleanup_sysc_bpon
+	clg	%r9,BASED(.Lcleanup_table+40)	# .Lsysc_done
 	jl	.Lcleanup_sysc_restore
-	clg	%r9,BASED(.Lcleanup_table+40)	# .Lio_tif
+	clg	%r9,BASED(.Lcleanup_table+48)	# .Lio_tif
 	jl	0f
-	clg	%r9,BASED(.Lcleanup_table+48)	# .Lio_restore
+	clg	%r9,BASED(.Lcleanup_table+56)	# .Lio_restore
 	jl	.Lcleanup_io_tif
-	clg	%r9,BASED(.Lcleanup_table+56)	# .Lio_done
+	clg	%r9,BASED(.Lcleanup_table+64)	# .Lio_done
 	jl	.Lcleanup_io_restore
-	clg	%r9,BASED(.Lcleanup_table+64)	# psw_idle
+	clg	%r9,BASED(.Lcleanup_table+72)	# psw_idle
 	jl	0f
-	clg	%r9,BASED(.Lcleanup_table+72)	# .Lpsw_idle_end
+	clg	%r9,BASED(.Lcleanup_table+80)	# .Lpsw_idle_end
 	jl	.Lcleanup_idle
-	clg	%r9,BASED(.Lcleanup_table+80)	# save_fpu_regs
+	clg	%r9,BASED(.Lcleanup_table+88)	# save_fpu_regs
 	jl	0f
-	clg	%r9,BASED(.Lcleanup_table+88)	# .Lsave_fpu_regs_end
+	clg	%r9,BASED(.Lcleanup_table+96)	# .Lsave_fpu_regs_end
 	jl	.Lcleanup_save_fpu_regs
-	clg	%r9,BASED(.Lcleanup_table+96)	# load_fpu_regs
+	clg	%r9,BASED(.Lcleanup_table+104)	# load_fpu_regs
 	jl	0f
-	clg	%r9,BASED(.Lcleanup_table+104)	# .Lload_fpu_regs_end
+	clg	%r9,BASED(.Lcleanup_table+112)	# .Lload_fpu_regs_end
 	jl	.Lcleanup_load_fpu_regs
 0:	br	%r14
 
@@ -1049,6 +1119,7 @@ cleanup_critical:
 	.quad	system_call
 	.quad	.Lsysc_do_svc
 	.quad	.Lsysc_tif
+	.quad	.Lsysc_bpon
 	.quad	.Lsysc_restore
 	.quad	.Lsysc_done
 	.quad	.Lio_tif
@@ -1069,6 +1140,7 @@ cleanup_critical:
 .Lcleanup_sie:
 	lg	%r9,__SF_EMPTY(%r15)		# get control block pointer
 	ni	__SIE_PROG0C+3(%r9),0xfe	# no longer in SIE
+	BPOFF
 	lctlg	%c1,%c1,__LC_USER_ASCE		# load primary asce
 	larl	%r9,sie_exit			# skip forward to sie_exit
 	br	%r14
@@ -1128,6 +1200,7 @@ cleanup_critical:
 	stg	%r15,56(%r11)		# r15 stack pointer
 	# set new psw address and exit
 	larl	%r9,.Lsysc_do_svc
+	BPOFF
 	br	%r14
 .Lcleanup_system_call_insn:
 	.quad	system_call
@@ -1140,6 +1213,9 @@ cleanup_critical:
 	larl	%r9,.Lsysc_tif
 	br	%r14
 
+.Lcleanup_sysc_bpon:
+	BPON
+	/* Fallthrough */
 .Lcleanup_sysc_restore:
 	# check if stpt has been executed
 	clg	%r9,BASED(.Lcleanup_sysc_restore_insn)
@@ -1175,6 +1251,9 @@ cleanup_critical:
 	mvc	__LC_RETURN_PSW(16),__PT_PSW(%r9)
 	mvc	0(64,%r11),__PT_R8(%r9)
 	lmg	%r0,%r7,__PT_R0(%r9)
+	TSTMSK	__PT_FLAGS(%r9),_PIF_NOBP
+	jno	1f
+	BPOFF
 1:	lmg	%r8,%r9,__LC_RETURN_PSW
 	br	%r14
 .Lcleanup_io_restore_insn:

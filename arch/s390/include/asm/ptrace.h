@@ -11,9 +11,11 @@
 
 #define PIF_SYSCALL		0	/* inside a system call */
 #define PIF_PER_TRAP		1	/* deliver sigtrap on return to user */
+#define PIF_NOBP		2	/* disable BP on return */
 
 #define _PIF_SYSCALL		_BITUL(PIF_SYSCALL)
 #define _PIF_PER_TRAP		_BITUL(PIF_PER_TRAP)
+#define _PIF_NOBP		_BITUL(PIF_NOBP)
 
 #ifndef __ASSEMBLY__
 
