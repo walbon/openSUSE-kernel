@@ -1435,31 +1435,11 @@ nvme_rdma_timeout(struct request *rq, bool reserved)
 /*
  * We cannot accept any other command until the Connect command has completed.
  */
-static inline int nvme_rdma_queue_is_ready(struct nvme_rdma_queue *queue,
+static inline int nvme_rdma_is_ready(struct nvme_rdma_queue *queue,
 		struct request *rq)
 {
-	if (unlikely(!test_bit(NVME_RDMA_Q_LIVE, &queue->flags))) {
-		struct nvme_command *cmd = nvme_req(rq)->cmd;
-
-		if (rq->cmd_type != REQ_TYPE_DRV_PRIV ||
-		    cmd->common.opcode != nvme_fabrics_command ||
-		    cmd->fabrics.fctype != nvme_fabrics_type_connect) {
-			/*
-			 * reconnecting state means transport disruption, which
-			 * can take a long time and even might fail permanently,
-			 * so we can't let incoming I/O be requeued forever.
-			 * fail it fast to allow upper layers a chance to
-			 * failover.
-			 */
-			if (queue->ctrl->ctrl.state == NVME_CTRL_RECONNECTING ||
-			    queue->ctrl->ctrl.state == NVME_CTRL_DELETING) {
-				nvme_req(rq)->status = NVME_SC_ABORT_REQ;
-				return -EIO;
-			} else
-				return -EAGAIN;
-		}
-	}
-
+	if (unlikely(!test_bit(NVME_RDMA_Q_LIVE, &queue->flags)))
+		return nvmf_check_init_req(&queue->ctrl->ctrl, rq);
 	return 0;
 }
 
@@ -1478,7 +1458,7 @@ static int nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
 
 	WARN_ON_ONCE(rq->tag < 0);
 
-	ret = nvme_rdma_queue_is_ready(queue, rq);
+	ret = nvme_rdma_is_ready(queue, rq);
 	if (unlikely(ret))
 		goto err;
 
