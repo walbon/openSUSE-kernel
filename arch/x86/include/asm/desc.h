@@ -43,7 +43,11 @@ struct gdt_page {
 	struct desc_struct gdt[GDT_ENTRIES];
 } __attribute__((aligned(PAGE_SIZE)));
 
+#ifdef __GENKSYMS__
 DECLARE_PER_CPU_PAGE_ALIGNED(struct gdt_page, gdt_page);
+#else
+DECLARE_PER_CPU_PAGE_ALIGNED_USER_MAPPED(struct gdt_page, gdt_page);
+#endif
 
 static inline struct desc_struct *get_cpu_gdt_table(unsigned int cpu)
 {
