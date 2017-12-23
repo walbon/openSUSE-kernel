@@ -26,6 +26,10 @@ void initmem_init(void);
 void setup_panic(void);
 #define ARCH_PANIC_TIMEOUT 180
 
+extern bool rfi_flush;
+void rfi_flush_enable(bool enable);
+void __init setup_rfi_flush(void);
+
 #endif /* !__ASSEMBLY__ */
 
 #endif	/* _ASM_POWERPC_SETUP_H */
