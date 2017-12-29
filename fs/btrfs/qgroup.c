@@ -2860,7 +2860,7 @@ int btrfs_qgroup_reserve_data(struct inode *inode, u64 start, u64 len)
 	if (ret < 0)
 		goto cleanup;
 
-	ulist_fini(&changeset.range_changed);
+	ulist_release(&changeset.range_changed);
 	return ret;
 
 cleanup:
@@ -2870,7 +2870,7 @@ cleanup:
 		clear_extent_bit(&BTRFS_I(inode)->io_tree, unode->val,
 				 unode->aux, EXTENT_QGROUP_RESERVED, 0, 0, NULL,
 				 GFP_NOFS);
-	ulist_fini(&changeset.range_changed);
+	ulist_release(&changeset.range_changed);
 	return ret;
 }
 
@@ -2895,7 +2895,7 @@ static int __btrfs_qgroup_release_data(struct inode *inode, u64 start, u64 len,
 	trace_btrfs_qgroup_release_data(inode, start, len,
 					changeset.bytes_changed, trace_op);
 out:
-	ulist_fini(&changeset.range_changed);
+	ulist_release(&changeset.range_changed);
 	return ret;
 }
 
@@ -3003,5 +3003,5 @@ void btrfs_qgroup_check_reserved_leak(struct inode *inode)
 		}
 		qgroup_free(BTRFS_I(inode)->root, changeset.bytes_changed);
 	}
-	ulist_fini(&changeset.range_changed);
+	ulist_release(&changeset.range_changed);
 }
