@@ -1130,6 +1130,7 @@ static int cluster_pages_for_defrag(struct inode *inode,
 	struct btrfs_ordered_extent *ordered;
 	struct extent_state *cached_state = NULL;
 	struct extent_io_tree *tree;
+	struct extent_changeset *data_reserved = NULL;
 	gfp_t mask = btrfs_alloc_write_mask(inode->i_mapping);
 
 	file_end = (isize - 1) >> PAGE_CACHE_SHIFT;
@@ -1138,7 +1139,7 @@ static int cluster_pages_for_defrag(struct inode *inode,
 
 	page_cnt = min_t(u64, (u64)num_pages, (u64)file_end - start_index + 1);
 
-	ret = btrfs_delalloc_reserve_space(inode,
+	ret = btrfs_delalloc_reserve_space(inode, &data_reserved,
 			start_index << PAGE_CACHE_SHIFT,
 			page_cnt << PAGE_CACHE_SHIFT);
 	if (ret)
@@ -1250,6 +1251,7 @@ again:
 		unlock_page(pages[i]);
 		page_cache_release(pages[i]);
 	}
+	extent_changeset_free(data_reserved);
 	return i_done;
 out:
 	for (i = 0; i < i_done; i++) {
@@ -1259,6 +1261,7 @@ out:
 	btrfs_delalloc_release_space(inode,
 			start_index << PAGE_CACHE_SHIFT,
 			page_cnt << PAGE_CACHE_SHIFT);
+	extent_changeset_free(data_reserved);
 	return ret;
 
 }

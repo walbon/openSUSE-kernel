@@ -3095,11 +3095,12 @@ int prealloc_file_extent_cluster(struct inode *inode,
 	u64 prealloc_start = cluster->start - offset;
 	u64 prealloc_end = cluster->end - offset;
 	u64 cur_offset;
+	struct extent_changeset *data_reserved = NULL;
 
 	BUG_ON(cluster->start != cluster->boundary[0]);
 	mutex_lock(&inode->i_mutex);
 
-	ret = btrfs_check_data_free_space(inode, prealloc_start,
+	ret = btrfs_check_data_free_space(inode, &data_reserved, prealloc_start,
 					  prealloc_end + 1 - prealloc_start);
 	if (ret)
 		goto out;
@@ -3131,6 +3132,7 @@ int prealloc_file_extent_cluster(struct inode *inode,
 				       prealloc_end + 1 - cur_offset);
 out:
 	mutex_unlock(&inode->i_mutex);
+	extent_changeset_free(data_reserved);
 	return ret;
 }
 

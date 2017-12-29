@@ -18,6 +18,7 @@
 
 #include <linux/pagemap.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include "btrfs-tests.h"
 #include "../extent_io.h"
 
