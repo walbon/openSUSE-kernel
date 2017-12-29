@@ -470,7 +470,7 @@ int btrfs_test_qgroups(void)
 	 */
 	root->fs_info->tree_root = root;
 	root->fs_info->quota_root = root;
-	set_bit(BTRFS_FS_QUOTA_ENABLED, &fs_info->flags);
+	set_bit(BTRFS_FS_QUOTA_ENABLED, &root->fs_info->flags);
 
 	/*
 	 * Can't use bytenr 0, some things freak out
