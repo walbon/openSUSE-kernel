@@ -404,6 +404,7 @@ xfs_inode_item_unpin(
 		wake_up_bit(&ip->i_flags, __XFS_IPINNED_BIT);
 }
 
+#ifndef __GENKSYMS__
 /*
  * Callback used to mark a buffer with XFS_LI_FAILED when items in the buffer
  * have been failed during writeback
@@ -420,6 +421,7 @@ xfs_inode_item_error(
 	ASSERT(xfs_isiflocked(INODE_ITEM(lip)->ili_inode));
 	xfs_set_li_failed(lip, bp);
 }
+#endif
 
 STATIC uint
 xfs_inode_item_push(
@@ -428,9 +430,13 @@ xfs_inode_item_push(
 {
 	struct xfs_inode_log_item *iip = INODE_ITEM(lip);
 	struct xfs_inode	*ip = iip->ili_inode;
-	struct xfs_buf		*bp = lip->li_buf;
+	struct xfs_buf		*bp = NULL;
 	uint			rval = XFS_ITEM_SUCCESS;
 	int			error;
+
+#ifndef __GENKSYMS__
+	bp = lip->li_buf;
+#endif
 
 	if (xfs_ipincount(ip) > 0)
 		return XFS_ITEM_PINNED;
@@ -440,6 +446,7 @@ xfs_inode_item_push(
 	 * previously. Resubmit the buffer for IO.
 	 */
 	if (lip->li_flags & XFS_LI_FAILED) {
+#ifndef __GENKSYMS__
 		if (!xfs_buf_trylock(bp))
 			return XFS_ITEM_LOCKED;
 
@@ -447,6 +454,10 @@ xfs_inode_item_push(
 			rval = XFS_ITEM_FLUSHING;
 
 		xfs_buf_unlock(bp);
+#else
+		rval = XFS_ITEM_FLUSHING;
+#endif
+
 		return rval;
 	}
 
@@ -582,7 +593,9 @@ static const struct xfs_item_ops xfs_inode_item_ops = {
 	.iop_committed	= xfs_inode_item_committed,
 	.iop_push	= xfs_inode_item_push,
 	.iop_committing = xfs_inode_item_committing,
+#ifndef __GENKSYMS__
 	.iop_error	= xfs_inode_item_error
+#endif
 };
 
 
