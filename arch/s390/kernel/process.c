@@ -72,8 +72,6 @@ extern void kernel_thread_starter(void);
  */
 void exit_thread(struct task_struct *tsk)
 {
-	if (tsk == current)
-		exit_thread_runtime_instr();
 }
 
 void flush_thread(void)
@@ -88,6 +86,7 @@ void arch_release_task_struct(struct task_struct *tsk)
 {
 	/* Free either the floating-point or the vector register save area */
 	kfree(tsk->thread.fpu.regs);
+	runtime_instr_release(tsk);
 }
 
 int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
