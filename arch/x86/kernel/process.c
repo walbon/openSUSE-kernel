@@ -39,7 +39,11 @@
  * section. Since TSS's are completely CPU-local, we want them
  * on exact cacheline boundaries, to eliminate cacheline ping-pong.
  */
+#if defined(CONFIG_GENKSYMS)
 __visible DEFINE_PER_CPU_SHARED_ALIGNED(struct tss_struct, cpu_tss) = {
+#else
+__visible DEFINE_PER_CPU_SHARED_ALIGNED_USER_MAPPED(struct tss_struct, cpu_tss) = {
+#endif
 	.x86_tss = {
 		.sp0 = TOP_OF_INIT_STACK,
 #ifdef CONFIG_X86_32
@@ -422,11 +426,16 @@ static void mwait_idle(void)
 			smp_mb(); /* quirk */
 		}
 
+		x86_disable_ibrs();
+
 		__monitor((void *)&current_thread_info()->flags, 0, 0);
 		if (!need_resched())
 			__sti_mwait(0, 0);
 		else
 			local_irq_enable();
+
+		x86_enable_ibrs();
+
 		trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, smp_processor_id());
 	} else {
 		local_irq_enable();

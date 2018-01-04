@@ -20,6 +20,7 @@
 #include <asm/code-patching.h>
 #include <asm/page.h>
 #include <asm/sections.h>
+#include <asm/setup.h>
 
 
 struct fixup_entry {
@@ -112,6 +113,33 @@ void do_feature_fixups(unsigned long value, void *fixup_start, void *fixup_end)
 		}
 	}
 }
+
+#ifdef CONFIG_PPC_BOOK3S_64
+void do_rfi_flush_fixups(bool enable, unsigned int insn)
+{
+	long *start, *end;
+	unsigned int *dest;
+	int i;
+
+	start = PTRRELOC(&__start___rfi_flush_fixup),
+	end = PTRRELOC(&__stop___rfi_flush_fixup);
+
+	for (i = 0; start < end; start++, i++) {
+		dest = (void *)start + *start;
+
+		pr_devel("RFI FLUSH FIXUP %s %lx\n", enable ? "enable" : "disable", (unsigned long)start);
+		if (!enable) {
+			pr_devel("patching dest %lx\n", (unsigned long)dest);
+			patch_instruction(dest, PPC_INST_NOP);
+		} else {
+			pr_devel("patching dest %lx\n", (unsigned long)dest);
+			patch_instruction(dest, insn);
+		}
+	}
+
+	printk(KERN_DEBUG "rfi-fixups: patched %d locations\n", i);
+}
+#endif /* CONFIG_PPC_BOOK3S_64 */
 
 void do_lwsync_fixups(unsigned long value, void *fixup_start, void *fixup_end)
 {

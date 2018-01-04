@@ -48,6 +48,8 @@
 #include <asm/kexec.h>
 #include <asm/apic.h>
 #include <asm/irq_remapping.h>
+#include <asm/spec_ctrl.h>
+#include <asm/proto.h>
 
 #include "trace.h"
 #include "pmu.h"
@@ -611,6 +613,8 @@ struct vcpu_vmx {
 	 */
 	u64 msr_ia32_feature_control;
 	u64 msr_ia32_feature_control_valid_bits;
+
+	u64 spec_ctrl;
 };
 
 enum segment_cache_field {
@@ -2061,6 +2065,8 @@ static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 	if (per_cpu(current_vmcs, cpu) != vmx->loaded_vmcs->vmcs) {
 		per_cpu(current_vmcs, cpu) = vmx->loaded_vmcs->vmcs;
 		vmcs_load(vmx->loaded_vmcs->vmcs);
+
+		x86_ibp_barrier();
 	}
 
 	if (vmx->loaded_vmcs->cpu != cpu) {
@@ -2815,6 +2821,7 @@ static inline bool vmx_feature_control_msr_valid(struct kvm_vcpu *vcpu,
  */
 static int vmx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 {
+	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	struct shared_msr_entry *msr;
 
 	switch (msr_info->index) {
@@ -2826,14 +2833,17 @@ static int vmx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		msr_info->data = vmcs_readl(GUEST_GS_BASE);
 		break;
 	case MSR_KERNEL_GS_BASE:
-		vmx_load_host_state(to_vmx(vcpu));
-		msr_info->data = to_vmx(vcpu)->msr_guest_kernel_gs_base;
+		vmx_load_host_state(vmx);
+		msr_info->data = vmx->msr_guest_kernel_gs_base;
 		break;
 #endif
 	case MSR_EFER:
 		return kvm_get_msr_common(vcpu, msr_info);
 	case MSR_IA32_TSC:
 		msr_info->data = guest_read_tsc(vcpu);
+		break;
+	case MSR_IA32_SPEC_CTRL:
+		msr_info->data = vmx->spec_ctrl;
 		break;
 	case MSR_IA32_SYSENTER_CS:
 		msr_info->data = vmcs_read32(GUEST_SYSENTER_CS);
@@ -2852,13 +2862,13 @@ static int vmx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		break;
 	case MSR_IA32_MCG_EXT_CTL:
 		if (!msr_info->host_initiated &&
-		    !(to_vmx(vcpu)->msr_ia32_feature_control &
+		    !(vmx->msr_ia32_feature_control &
 		      FEATURE_CONTROL_LMCE))
 			return 1;
 		msr_info->data = vcpu->arch.mcg_ext_ctl;
 		break;
 	case MSR_IA32_FEATURE_CONTROL:
-		msr_info->data = to_vmx(vcpu)->msr_ia32_feature_control;
+		msr_info->data = vmx->msr_ia32_feature_control;
 		break;
 	case MSR_IA32_VMX_BASIC ... MSR_IA32_VMX_VMFUNC:
 		if (!nested_vmx_allowed(vcpu))
@@ -2874,7 +2884,7 @@ static int vmx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 			return 1;
 		/* Otherwise falls through */
 	default:
-		msr = find_msr_entry(to_vmx(vcpu), msr_info->index);
+		msr = find_msr_entry(vmx, msr_info->index);
 		if (msr) {
 			msr_info->data = msr->data;
 			break;
@@ -2938,6 +2948,9 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		break;
 	case MSR_IA32_TSC:
 		kvm_write_tsc(vcpu, msr_info);
+		break;
+	case MSR_IA32_SPEC_CTRL:
+		vmx->spec_ctrl = msr_info->data;
 		break;
 	case MSR_IA32_CR_PAT:
 		if (vmcs_config.vmentry_ctrl & VM_ENTRY_LOAD_IA32_PAT) {
@@ -5725,6 +5738,7 @@ static int handle_rdmsr(struct kvm_vcpu *vcpu)
 
 	msr_info.index = ecx;
 	msr_info.host_initiated = false;
+
 	if (vmx_get_msr(vcpu, &msr_info)) {
 		trace_kvm_msr_read_ex(ecx);
 		kvm_inject_gp(vcpu, 0);
@@ -6309,6 +6323,8 @@ static __init int hardware_setup(void)
 	vmx_disable_intercept_for_msr(MSR_IA32_SYSENTER_CS, false);
 	vmx_disable_intercept_for_msr(MSR_IA32_SYSENTER_ESP, false);
 	vmx_disable_intercept_for_msr(MSR_IA32_SYSENTER_EIP, false);
+	vmx_disable_intercept_for_msr(MSR_IA32_SPEC_CTRL, false);
+	vmx_disable_intercept_for_msr(MSR_IA32_PRED_CMD, false);
 
 	memcpy(vmx_msr_bitmap_legacy_x2apic,
 			vmx_msr_bitmap_legacy, PAGE_SIZE);
@@ -8640,6 +8656,11 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		__write_pkru(vmx->guest_pkru);
 
 	atomic_switch_perf_msrs(vmx);
+
+	if (x86_ibrs_enabled())
+		add_atomic_switch_msr(vmx, MSR_IA32_SPEC_CTRL,
+				      vmx->spec_ctrl, FEATURE_ENABLE_IBRS);
+
 	debugctlmsr = get_debugctlmsr();
 
 	vmx->__launched = vmx->loaded_vmcs->launched;
@@ -8747,6 +8768,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		, "eax", "ebx", "edi", "esi"
 #endif
 	      );
+
+	stuff_RSB();
 
 	/* MSR_IA32_DEBUGCTLMSR is zeroed on vmexit. Restore it if needed */
 	if (debugctlmsr)

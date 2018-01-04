@@ -54,7 +54,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_REAL_LE)				\
 1:	mfspr	r12,SPRN_SRR1 ;					\
 	xori	r12,r12,MSR_LE ;				\
 	mtspr	SPRN_SRR1,r12 ;					\
-	rfid ;		/* return to userspace */		\
+	RFI_TO_USER ;	/* return to userspace */		\
 	b	. ;	/* prevent speculative execution */
 
 #if defined(CONFIG_RELOCATABLE)
@@ -671,7 +671,7 @@ masked_##_H##interrupt:					\
 	ld	r10,PACA_EXGEN+EX_R10(r13);		\
 	ld	r11,PACA_EXGEN+EX_R11(r13);		\
 	GET_SCRATCH0(r13);				\
-	##_H##rfid;					\
+	##_H##RFI_TO_KERNEL;				\
 	b	.
 	
 	MASKED_INTERRUPT()
@@ -747,7 +747,7 @@ slb_miss_user_pseries:
 	mtspr	SRR0,r12
 	mfspr	r12,SRR1			/* and SRR1 */
 	mtspr	SRR1,r10
-	rfid
+	RFI_TO_KERNEL
 	b	.				/* prevent spec. execution */
 #endif /* __DISABLED__ */
 
@@ -761,7 +761,7 @@ kvmppc_skip_interrupt:
 	addi	r13, r13, 4
 	mtspr	SPRN_SRR0, r13
 	GET_SCRATCH0(r13)
-	rfid
+	RFI_TO_GUEST
 	b	.
 
 kvmppc_skip_Hinterrupt:
@@ -773,7 +773,7 @@ kvmppc_skip_Hinterrupt:
 	addi	r13, r13, 4
 	mtspr	SPRN_HSRR0, r13
 	GET_SCRATCH0(r13)
-	hrfid
+	HRFI_TO_GUEST
 	b	.
 #endif
 
@@ -1525,7 +1525,7 @@ slb_miss_realmode:
 	mtspr	SPRN_SRR0,r10
 	ld	r10,PACAKMSR(r13)
 	mtspr	SPRN_SRR1,r10
-	rfid
+	RFI_TO_KERNEL
 	b	.
 
 unrecov_slb:

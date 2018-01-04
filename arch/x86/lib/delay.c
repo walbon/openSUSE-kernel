@@ -26,6 +26,8 @@
 # include <asm/smp.h>
 #endif
 
+#define IBRS_DISABLE_THRESHOLD 1000
+
 /* simple loop based delay: */
 static void delay_loop(unsigned long loops)
 {
@@ -105,6 +107,9 @@ static void delay_mwaitx(unsigned long __loops)
 	for (;;) {
 		delay = min_t(u64, MWAITX_MAX_LOOPS, loops);
 
+		if (delay > IBRS_DISABLE_THRESHOLD)
+			x86_disable_ibrs();
+
 		/*
 		 * Use cpu_tss as a cacheline-aligned, seldomly
 		 * accessed per-cpu variable as the monitor target.
@@ -117,6 +122,9 @@ static void delay_mwaitx(unsigned long __loops)
 		 * here in delay() to minimize wakeup latency.
 		 */
 		__mwaitx(MWAITX_DISABLE_CSTATES, delay, MWAITX_ECX_TIMER_ENABLE);
+
+		if (delay > IBRS_DISABLE_THRESHOLD)
+			x86_enable_ibrs();
 
 		end = rdtsc_ordered();
 
