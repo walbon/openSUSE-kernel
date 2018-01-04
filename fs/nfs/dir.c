@@ -2328,6 +2328,27 @@ void nfs_access_add_cache(struct inode *inode, struct nfs_access_entry *set)
 	struct nfs_access_entry *cache = kmalloc(sizeof(*cache), GFP_KERNEL);
 	if (cache == NULL)
 		return;
+	/* If there is an old entry, remove it first to avoid cache getting
+	 * too large
+	 */
+	if (!list_empty(&NFS_I(inode)->access_cache_entry_lru)) {
+		struct nfs_access_entry *old;
+		spin_lock(&inode->i_lock);
+		old = list_first_entry_or_null(&NFS_I(inode)->access_cache_entry_lru,
+					       struct nfs_access_entry, lru);
+		if (old &&
+		    !nfs_have_delegated_attributes(inode) &&
+		    !time_in_range_open(jiffies, old->jiffies,
+					old->jiffies + NFS_I(inode)->attrtimeo)) {
+			list_del_init(&old->lru);
+			rb_erase(&old->rb_node, &NFS_I(inode)->access_cache);
+		} else
+			old = NULL;
+		spin_unlock(&inode->i_lock);
+		if (old)
+			nfs_access_free_entry(old);
+	}
+
 	RB_CLEAR_NODE(&cache->rb_node);
 	cache->jiffies = set->jiffies;
 	cache->cred = get_rpccred(set->cred);
