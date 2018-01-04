@@ -1649,7 +1649,8 @@ int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 	spinlock_t *ptl;
 	pmd_t entry;
 	bool preserve_write;
-	int ret;
+
+	int ret = 0;
 
 	if (__pmd_trans_huge_lock(pmd, vma, &ptl) != 1)
 		return 0;
@@ -1709,7 +1710,6 @@ int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 	BUG_ON(!preserve_write && pmd_write(entry));
 unlock:
 	spin_unlock(ptl);
-
 	return ret;
 }
 
