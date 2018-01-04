@@ -52,10 +52,20 @@ unx_destroy(struct rpc_auth *auth)
 static int
 unx_hash_cred(struct auth_cred *acred, unsigned int hashbits)
 {
-	u64 uid = from_kuid(&init_user_ns, acred->uid);
-	u64 gid = from_kgid(&init_user_ns, acred->gid);
-	return hash_64(gid | (uid << (sizeof(gid_t) * 8)),
-		       hashbits);
+	u32 uid = from_kuid(&init_user_ns, acred->uid);
+	u32 gid;
+	int ret = hash_32(uid, 32);
+
+	if (acred->group_info) {
+		int g;
+
+		for (g = 0; g < acred->group_info->ngroups && g < NFS_NGROUPS; g++) {
+			gid = from_kgid(&init_user_ns, GROUP_AT(acred->group_info, g));
+			ret = hash_32(ret ^ gid, 32);
+		}
+	}
+	gid = from_kgid(&init_user_ns, acred->gid);
+	return hash_32(ret ^ gid, hashbits);
 }
 
 /*
