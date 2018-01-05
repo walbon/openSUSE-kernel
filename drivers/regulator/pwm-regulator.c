@@ -133,6 +133,7 @@ static int pwm_regulator_set_voltage(struct regulator_dev *rdev,
 	unsigned int ramp_delay = rdev->constraints->ramp_delay;
 	unsigned int period = pwm_get_period(drvdata->pwm);
 	int duty_cycle;
+	int old_uV = pwm_regulator_get_voltage(rdev);
 	int ret;
 
 	duty_cycle = pwm_voltage_to_duty_cycle_percentage(rdev, min_uV);
@@ -150,8 +151,12 @@ static int pwm_regulator_set_voltage(struct regulator_dev *rdev,
 	}
 	drvdata->volt_uV = min_uV;
 
-	/* Delay required by PWM regulator to settle to the new voltage */
-	usleep_range(ramp_delay, ramp_delay + 1000);
+	if ((ramp_delay == 0) || !pwm_regulator_is_enabled(rdev))
+		return 0;
+
+	/* Ramp delay is in uV/uS. Adjust to uS and delay */
+	ramp_delay = DIV_ROUND_UP(abs(min_uV - old_uV), ramp_delay);
+	usleep_range(ramp_delay, ramp_delay + DIV_ROUND_UP(ramp_delay, 10));
 
 	return 0;
 }
