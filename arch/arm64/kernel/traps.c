@@ -34,6 +34,7 @@
 
 #include <asm/atomic.h>
 #include <asm/bug.h>
+#include <asm/daifflags.h>
 #include <asm/debug-monitors.h>
 #include <asm/esr.h>
 #include <asm/insn.h>
@@ -604,7 +605,7 @@ asmlinkage void bad_mode(struct pt_regs *regs, int reason, unsigned int esr)
 		handler[reason], esr, esr_get_class_string(esr));
 
 	die("Oops - bad mode", regs, 0);
-	local_irq_disable();
+	local_daif_mask();
 	panic("bad mode");
 }
 
