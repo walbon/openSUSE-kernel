@@ -28,6 +28,13 @@ static inline void paravirt_release_pud(unsigned long pfn) {}
 extern gfp_t __userpte_alloc_gfp;
 
 /*
+ * Instead of one pgd, Kaiser acquires two pgds.  Being order-1, it is
+ * both 8k in size and 8k-aligned.  That lets us just flip bit 12
+ * in a pointer to swap between the two 4k halves.
+ */
+#define PGD_ALLOCATION_ORDER    kaiser_enabled
+
+/*
  * Allocate and free page tables.
  */
 extern pgd_t *pgd_alloc(struct mm_struct *);
