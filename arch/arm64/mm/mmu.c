@@ -51,6 +51,9 @@ u64 idmap_t0sz = TCR_T0SZ(VA_BITS);
 u64 kimage_voffset __section(.hyp.text);
 EXPORT_SYMBOL(kimage_voffset);
 
+/* Hardcode rodata=true to fix compilation errors */
+static bool rodata_enabled = true;
+
 /*
  * Empty_zero_page is a special page that is used for zero-initialized data
  * and COW.
@@ -547,7 +550,7 @@ static void __init map_kernel(pgd_t *pgd)
 	 * mapping to install SW breakpoints. Allow this (only) when
 	 * explicitly requested with rodata=off.
 	 */
-	pgprot_t text_prot = true ? PAGE_KERNEL_ROX : PAGE_KERNEL_EXEC;
+	pgprot_t text_prot = rodata_enabled ? PAGE_KERNEL_ROX : PAGE_KERNEL_EXEC;
 
 	/*
 	 * Only rodata will be remapped with different permissions later on,
