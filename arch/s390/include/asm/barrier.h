@@ -30,6 +30,7 @@ static inline void gmb(void)
 		ALTERNATIVE("", ".long 0xb2e8f000", 81)
 		: : : "memory");
 }
+#define gmb gmb
 
 #define rmb()				barrier()
 #define wmb()				barrier()
