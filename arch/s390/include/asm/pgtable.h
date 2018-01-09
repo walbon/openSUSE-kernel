@@ -1409,20 +1409,6 @@ static inline pmd_t *pmd_offset(pud_t *pud, unsigned long address)
 #define pte_offset_map(pmd, address) pte_offset_kernel(pmd, address)
 #define pte_unmap(pte) do { } while (0)
 
-#if defined(CONFIG_TRANSPARENT_HUGEPAGE) || defined(CONFIG_HUGETLB_PAGE)
-static inline unsigned long massage_pgprot_pmd(pgprot_t pgprot)
-{
-	/*
-	 * pgprot is PAGE_NONE, PAGE_READ, or PAGE_WRITE (see __Pxxx / __Sxxx)
-	 * Convert to segment table entry format.
-	 */
-	if (pgprot_val(pgprot) == pgprot_val(PAGE_NONE))
-		return pgprot_val(SEGMENT_NONE);
-	if (pgprot_val(pgprot) == pgprot_val(PAGE_READ))
-		return pgprot_val(SEGMENT_READ);
-	return pgprot_val(SEGMENT_WRITE);
-}
-
 static inline pmd_t pmd_wrprotect(pmd_t pmd)
 {
 	pmd_val(pmd) &= ~_SEGMENT_ENTRY_WRITE;
@@ -1457,6 +1443,55 @@ static inline pmd_t pmd_mkdirty(pmd_t pmd)
 			pmd_val(pmd) &= ~_SEGMENT_ENTRY_PROTECT;
 	}
 	return pmd;
+}
+
+static inline pud_t pud_wrprotect(pud_t pud)
+{
+	pud_val(pud) &= ~_REGION3_ENTRY_WRITE;
+	pud_val(pud) |= _REGION_ENTRY_PROTECT;
+	return pud;
+}
+
+static inline pud_t pud_mkwrite(pud_t pud)
+{
+	pud_val(pud) |= _REGION3_ENTRY_WRITE;
+	if (pud_large(pud) && !(pud_val(pud) & _REGION3_ENTRY_DIRTY))
+		return pud;
+	pud_val(pud) &= ~_REGION_ENTRY_PROTECT;
+	return pud;
+}
+
+static inline pud_t pud_mkclean(pud_t pud)
+{
+	if (pud_large(pud)) {
+		pud_val(pud) &= ~_REGION3_ENTRY_DIRTY;
+		pud_val(pud) |= _REGION_ENTRY_PROTECT;
+	}
+	return pud;
+}
+
+static inline pud_t pud_mkdirty(pud_t pud)
+{
+	if (pud_large(pud)) {
+		pud_val(pud) |= _REGION3_ENTRY_DIRTY;
+		if (pud_val(pud) & _REGION3_ENTRY_WRITE)
+			pud_val(pud) &= ~_REGION_ENTRY_PROTECT;
+	}
+	return pud;
+}
+
+#if defined(CONFIG_TRANSPARENT_HUGEPAGE) || defined(CONFIG_HUGETLB_PAGE)
+static inline unsigned long massage_pgprot_pmd(pgprot_t pgprot)
+{
+	/*
+	 * pgprot is PAGE_NONE, PAGE_READ, or PAGE_WRITE (see __Pxxx / __Sxxx)
+	 * Convert to segment table entry format.
+	 */
+	if (pgprot_val(pgprot) == pgprot_val(PAGE_NONE))
+		return pgprot_val(SEGMENT_NONE);
+	if (pgprot_val(pgprot) == pgprot_val(PAGE_READ))
+		return pgprot_val(SEGMENT_READ);
+	return pgprot_val(SEGMENT_WRITE);
 }
 
 static inline pmd_t pmd_mkyoung(pmd_t pmd)
