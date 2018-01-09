@@ -249,6 +249,11 @@ int main(void)
 	DEFINE(PACAMCEMERGSP, offsetof(struct paca_struct, mc_emergency_sp));
 	DEFINE(PACA_IN_MCE, offsetof(struct paca_struct, in_mce));
 #endif
+	OFFSET(PACA_RFI_FLUSH_FALLBACK_AREA, paca_struct, rfi_flush_fallback_area);
+	OFFSET(PACA_EXRFI, paca_struct, exrfi);
+	OFFSET(PACA_L1D_FLUSH_CONGRUENCE, paca_struct, l1d_flush_congruence);
+	OFFSET(PACA_L1D_FLUSH_SETS, paca_struct, l1d_flush_sets);
+
 	DEFINE(PACAHWCPUID, offsetof(struct paca_struct, hw_cpu_id));
 	DEFINE(PACAKEXECSTATE, offsetof(struct paca_struct, kexec_state));
 	DEFINE(PACA_DSCR_DEFAULT, offsetof(struct paca_struct, dscr_default));

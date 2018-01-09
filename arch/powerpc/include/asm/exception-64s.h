@@ -50,17 +50,20 @@
 #define EX_CFAR		80
 #define EX_PPR		88	/* SMT thread status register (priority) */
 #define EX_CTR		96
+#if defined(CONFIG_RELOCATABLE)
+#define EX_SIZE		10	/* size in u64 units */
+#else
+#define EX_SIZE		9	/* size in u64 units */
+#endif
 
 /*
- * The nop instruction allows a secure memory protection instruction to be
- * inserted with the rfi flush fixup.
+ * The nop instructions allow us to insert one or more instructions to flush the
+ * L1-D cache when return to userspace or a guest.
  */
-#define PREPARE_RFI_TO_USER						\
+#define RFI_FLUSH_SLOT							\
 	RFI_FLUSH_FIXUP_SECTION;					\
-	nop
-
-#define PREPARE_RFI_TO_GUEST						\
-	RFI_FLUSH_FIXUP_SECTION;					\
+	nop;								\
+	nop;								\
 	nop
 
 #define DEBUG_RFI
@@ -74,7 +77,7 @@
 	EMIT_BUG_ENTRY 666b,__FILE__,__LINE__,0;			\
 	GET_SCRATCH0(r3);
 #else
-#define CHECK_TARGET_MSR_PR(expected)
+#define CHECK_TARGET_MSR_PR(srr_reg, expected_pr)
 #endif
 
 #define RFI_TO_KERNEL							\
@@ -83,12 +86,19 @@
 
 #define RFI_TO_USER							\
 	CHECK_TARGET_MSR_PR(SPRN_SRR1, 1);				\
-	PREPARE_RFI_TO_USER;						\
-	rfid
+	RFI_FLUSH_SLOT;							\
+	rfid;								\
+	b	rfi_flush_fallback
+
+#define RFI_TO_USER_OR_KERNEL						\
+	RFI_FLUSH_SLOT;							\
+	rfid;								\
+	b	rfi_flush_fallback
 
 #define RFI_TO_GUEST							\
-	PREPARE_RFI_TO_GUEST;						\
-	rfid
+	RFI_FLUSH_SLOT;							\
+	rfid;								\
+	b	rfi_flush_fallback
 
 #define HRFI_TO_KERNEL							\
 	CHECK_TARGET_MSR_PR(SPRN_HSRR1, 0);				\
@@ -96,12 +106,24 @@
 
 #define HRFI_TO_USER							\
 	CHECK_TARGET_MSR_PR(SPRN_HSRR1, 1);				\
-	PREPARE_RFI_TO_USER;						\
-	hrfid
+	RFI_FLUSH_SLOT;							\
+	hrfid;								\
+	b	hrfi_flush_fallback
+
+#define HRFI_TO_USER_OR_KERNEL						\
+	RFI_FLUSH_SLOT;							\
+	hrfid;								\
+	b	hrfi_flush_fallback
 
 #define HRFI_TO_GUEST							\
-	PREPARE_RFI_TO_GUEST;						\
-	hrfid
+	RFI_FLUSH_SLOT;							\
+	hrfid;								\
+	b	hrfi_flush_fallback
+
+#define HRFI_TO_UNKNOWN						\
+	RFI_FLUSH_SLOT;							\
+	hrfid;								\
+	b	hrfi_flush_fallback
 
 #ifdef CONFIG_RELOCATABLE
 #define __EXCEPTION_RELON_PROLOG_PSERIES_1(label, h)			\

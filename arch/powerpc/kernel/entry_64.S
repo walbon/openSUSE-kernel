@@ -39,7 +39,10 @@
 #include <asm/tm.h>
 #ifdef CONFIG_PPC_BOOK3S
 #include <asm/exception-64s.h>
+#else
+#include <asm/exception-64e.h>
 #endif
+
 
 /*
  * System calls.
@@ -368,7 +371,7 @@ tabort_syscall:
 	mtspr	SPRN_SRR0, r11
 	mtspr	SPRN_SRR1, r12
 
-	rfid
+	RFI_TO_USER
 	b	.	/* prevent speculative execution */
 #endif
 
@@ -917,7 +920,9 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 	RFI_TO_USER
 	b	.	/* prevent speculative execution */
 
-1:	mtspr	SPRN_SRR1,r3
+	/* exit to kernel */
+1:
+	mtspr	SPRN_SRR1,r3
 
 	ld	r2,_CCR(r1)
 	mtcrf	0xFF,r2
@@ -929,6 +934,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_HAS_PPR)
 	ld	r3,GPR3(r1)
 	ld	r4,GPR4(r1)
 	ld	r1,GPR1(r1)
+
 	RFI_TO_KERNEL
 	b	.	/* prevent speculative execution */
 
@@ -1201,7 +1207,7 @@ _GLOBAL(enter_prom)
 	LOAD_REG_IMMEDIATE(r12, MSR_SF | MSR_ISF | MSR_LE)
 	andc	r11,r11,r12
 	mtsrr1	r11
-	rfid
+	RFI_TO_KERNEL
 #endif /* CONFIG_PPC_BOOK3E */
 
 1:	/* Return from OF */

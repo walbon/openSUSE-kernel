@@ -18,10 +18,9 @@
 #include <asm/smp.h>
 #include <asm/pmc.h>
 #include <asm/firmware.h>
-// #include <asm/ppc_asm.h>
+#include <asm/ppc_asm.h>
 
 #include "cacheinfo.h"
-// #include "setup.h"
 
 #ifdef CONFIG_PPC64
 #include <asm/paca.h>
@@ -499,6 +498,7 @@ static DEVICE_ATTR(purr, 0400, show_purr, store_purr);
 static DEVICE_ATTR(pir, 0400, show_pir, NULL);
 
 #ifdef CONFIG_PPC_BOOK3S_64
+extern bool rfi_flush;
 static ssize_t show_rfi_flush(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -1097,7 +1097,9 @@ static int __init topology_init(void)
 
 #ifdef CONFIG_PPC64
 	sysfs_create_dscr_default();
+#ifdef CONFIG_PPC_BOOK3S
 	sysfs_create_rfi_flush();
+#endif
 #endif /* CONFIG_PPC64 */
 
 	return 0;

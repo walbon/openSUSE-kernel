@@ -20,7 +20,11 @@
 #include <asm/lppaca.h>
 #include <asm/mmu.h>
 #include <asm/page.h>
+#ifdef CONFIG_PPC_BOOK3E
 #include <asm/exception-64e.h>
+#else
+#include <asm/exception-64s.h>
+#endif
 #ifdef CONFIG_KVM_BOOK3S_64_HANDLER
 #include <asm/kvm_book3s_asm.h>
 #endif
@@ -192,6 +196,20 @@ struct paca_struct {
 	struct kvmppc_book3s_shadow_vcpu shadow_vcpu;
 #endif
 	struct kvmppc_host_state kvm_hstate;
+#endif
+#ifndef __GENKSYMS__
+#ifdef CONFIG_PPC_BOOK3S_64
+
+	void *rfi_flush_fallback_area;
+
+	/*
+	 * rfi fallback flush must be in its own cacheline to prevent
+	 * other paca data leaking into the L1d
+	 */
+	u64 exrfi[EX_SIZE] __aligned(0x80);
+	u64 l1d_flush_congruence;
+	u64 l1d_flush_sets;
+#endif
 #endif
 };
 
