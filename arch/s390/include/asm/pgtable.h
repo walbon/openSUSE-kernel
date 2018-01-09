@@ -351,6 +351,19 @@ static inline int is_module_addr(void *addr)
 #define _ASCE_USER_BITS		(_ASCE_SPACE_SWITCH | _ASCE_PRIVATE_SPACE | \
 				 _ASCE_ALT_EVENT)
 
+static inline void csp(unsigned int *ptr, unsigned int old, unsigned int new)
+{
+	register unsigned long reg2 asm("2") = old;
+	register unsigned long reg3 asm("3") = new;
+	unsigned long address = (unsigned long)ptr | 1;
+
+	asm volatile(
+		"	csp	%0,%3"
+		: "+d" (reg2), "+m" (*ptr)
+		: "d" (reg3), "d" (address)
+		: "cc");
+}
+
 /*
  * Page protection definitions.
  */
@@ -1464,15 +1477,8 @@ static inline pmd_t mk_pmd_phys(unsigned long physpage, pgprot_t pgprot)
 
 static inline void __pmdp_csp(pmd_t *pmdp)
 {
-	register unsigned long reg2 asm("2") = pmd_val(*pmdp);
-	register unsigned long reg3 asm("3") = pmd_val(*pmdp) |
-					       _SEGMENT_ENTRY_INVALID;
-	register unsigned long reg4 asm("4") = ((unsigned long) pmdp) + 5;
-
-	asm volatile(
-		"	csp %1,%3"
-		: "=m" (*pmdp)
-		: "d" (reg2), "d" (reg3), "d" (reg4), "m" (*pmdp) : "cc");
+	csp((unsigned int *)pmdp + 1, pmd_val(*pmdp),
+	    pmd_val(*pmdp) | _SEGMENT_ENTRY_INVALID);
 }
 
 static inline void __pmdp_idte(unsigned long address, pmd_t *pmdp)
