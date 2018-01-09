@@ -97,5 +97,6 @@ int sclp_pci_report(struct zpci_report_error_header *report, u32 fh, u32 fid);
 int memcpy_hsa(void *dest, unsigned long src, size_t count, int mode);
 void sclp_early_detect(void);
 int _sclp_print_early(const char *);
+void sclp_ocf_cpc_name_copy(char *dst);
 
 #endif /* _ASM_S390_SCLP_H */
