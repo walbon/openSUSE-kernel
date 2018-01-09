@@ -47,7 +47,7 @@ static inline pud_t *vmem_pud_alloc(void)
 	return pud;
 }
 
-static inline pmd_t *vmem_pmd_alloc(void)
+pmd_t *vmem_pmd_alloc(unsigned long address)
 {
 	pmd_t *pmd = NULL;
 
@@ -58,7 +58,7 @@ static inline pmd_t *vmem_pmd_alloc(void)
 	return pmd;
 }
 
-static pte_t __ref *vmem_pte_alloc(unsigned long address)
+pte_t __ref *vmem_pte_alloc(unsigned long address)
 {
 	pte_t *pte;
 
@@ -106,7 +106,7 @@ static int vmem_add_mem(unsigned long start, unsigned long size, int ro)
 		}
 #endif
 		if (pud_none(*pu_dir)) {
-			pm_dir = vmem_pmd_alloc();
+			pm_dir = vmem_pmd_alloc(address);
 			if (!pm_dir)
 				goto out;
 			pud_populate(&init_mm, pu_dir, pm_dir);
@@ -209,7 +209,7 @@ int __meminit vmemmap_populate(unsigned long start, unsigned long end, int node)
 
 		pu_dir = pud_offset(pg_dir, address);
 		if (pud_none(*pu_dir)) {
-			pm_dir = vmem_pmd_alloc();
+			pm_dir = vmem_pmd_alloc(address);
 			if (!pm_dir)
 				goto out;
 			pud_populate(&init_mm, pu_dir, pm_dir);
