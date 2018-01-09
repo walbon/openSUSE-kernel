@@ -352,6 +352,10 @@ static int kvm_vm_ioctl_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap)
 		} else if (MACHINE_HAS_VX) {
 			set_kvm_facility(kvm->arch.model.fac->mask, 129);
 			set_kvm_facility(kvm->arch.model.fac->list, 129);
+			if (test_facility(134)) {
+				set_kvm_facility(kvm->arch.model.fac->mask, 134);
+				set_kvm_facility(kvm->arch.model.fac->list, 134);
+			}
 			if (test_facility(135)) {
 				set_kvm_facility(kvm->arch.model.fac->mask, 135);
 				set_kvm_facility(kvm->arch.model.fac->list, 135);
