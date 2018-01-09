@@ -79,6 +79,7 @@ pte_t __ref *vmem_pte_alloc(unsigned long address)
  */
 static int vmem_add_mem(unsigned long start, unsigned long size)
 {
+	unsigned long pgt_prot, sgt_prot, r3_prot;
 	unsigned long end = start + size;
 	unsigned long address = start;
 	pgd_t *pg_dir;
@@ -87,6 +88,14 @@ static int vmem_add_mem(unsigned long start, unsigned long size)
 	pte_t *pt_dir;
 	int ret = -ENOMEM;
 
+	pgt_prot = pgprot_val(PAGE_KERNEL);
+	sgt_prot = pgprot_val(SEGMENT_KERNEL);
+	r3_prot = pgprot_val(REGION3_KERNEL);
+	if (!MACHINE_HAS_NX) {
+		pgt_prot &= ~_PAGE_NOEXEC;
+		sgt_prot &= ~_SEGMENT_ENTRY_NOEXEC;
+		r3_prot &= ~_REGION_ENTRY_NOEXEC;
+	}
 	while (address < end) {
 		pg_dir = pgd_offset_k(address);
 		if (pgd_none(*pg_dir)) {
@@ -99,7 +108,7 @@ static int vmem_add_mem(unsigned long start, unsigned long size)
 #ifndef CONFIG_DEBUG_PAGEALLOC
 		if (MACHINE_HAS_EDAT2 && pud_none(*pu_dir) && address &&
 		    !(address & ~PUD_MASK) && (address + PUD_SIZE <= end)) {
-			pud_val(*pu_dir) = address | pgprot_val(REGION3_KERNEL);
+			pud_val(*pu_dir) = address | r3_prot;
 			address += PUD_SIZE;
 			continue;
 		}
@@ -114,7 +123,7 @@ static int vmem_add_mem(unsigned long start, unsigned long size)
 #ifndef CONFIG_DEBUG_PAGEALLOC
 		if (MACHINE_HAS_EDAT1 && pmd_none(*pm_dir) && address &&
 		    !(address & ~PMD_MASK) && (address + PMD_SIZE <= end)) {
-			pmd_val(*pm_dir) = address | pgprot_val(SEGMENT_KERNEL);
+			pmd_val(*pm_dir) = address | sgt_prot;
 			address += PMD_SIZE;
 			continue;
 		}
@@ -127,7 +136,7 @@ static int vmem_add_mem(unsigned long start, unsigned long size)
 		}
 
 		pt_dir = pte_offset_kernel(pm_dir, address);
-		pte_val(*pt_dir) = address |  pgprot_val(PAGE_KERNEL);
+		pte_val(*pt_dir) = address | pgt_prot;
 		address += PAGE_SIZE;
 	}
 	ret = 0;
@@ -188,6 +197,7 @@ static void vmem_remove_range(unsigned long start, unsigned long size)
  */
 int __meminit vmemmap_populate(unsigned long start, unsigned long end, int node)
 {
+	unsigned long pgt_prot, sgt_prot;
 	unsigned long address = start;
 	pgd_t *pg_dir;
 	pud_t *pu_dir;
@@ -195,6 +205,12 @@ int __meminit vmemmap_populate(unsigned long start, unsigned long end, int node)
 	pte_t *pt_dir;
 	int ret = -ENOMEM;
 
+	pgt_prot = pgprot_val(PAGE_KERNEL);
+	sgt_prot = pgprot_val(SEGMENT_KERNEL);
+	if (!MACHINE_HAS_NX) {
+		pgt_prot &= ~_PAGE_NOEXEC;
+		sgt_prot &= ~_SEGMENT_ENTRY_NOEXEC;
+	}
 	for (address = start; address < end;) {
 		pg_dir = pgd_offset_k(address);
 		if (pgd_none(*pg_dir)) {
@@ -226,8 +242,7 @@ int __meminit vmemmap_populate(unsigned long start, unsigned long end, int node)
 				new_page = vmemmap_alloc_block(PMD_SIZE, node);
 				if (!new_page)
 					goto out;
-				pmd_val(*pm_dir) = __pa(new_page) |
-					_SEGMENT_ENTRY | _SEGMENT_ENTRY_LARGE;
+				pmd_val(*pm_dir) = __pa(new_page) | sgt_prot;
 				address = (address + PMD_SIZE) & PMD_MASK;
 				continue;
 			}
@@ -247,8 +262,7 @@ int __meminit vmemmap_populate(unsigned long start, unsigned long end, int node)
 			new_page = vmemmap_alloc_block(PAGE_SIZE, node);
 			if (!new_page)
 				goto out;
-			pte_val(*pt_dir) =
-				__pa(new_page) | pgprot_val(PAGE_KERNEL);
+			pte_val(*pt_dir) = __pa(new_page) | pgt_prot;
 		}
 		address += PAGE_SIZE;
 	}
@@ -360,14 +374,21 @@ out:
  */
 void __init vmem_map_init(void)
 {
-	unsigned long ro_start, ro_end;
 	struct memblock_region *reg;
 
 	for_each_memblock(memory, reg)
 		vmem_add_mem(reg->base, reg->size);
-	ro_start = PFN_ALIGN((unsigned long)&_stext);
-	ro_end = (unsigned long)&_eshared & PAGE_MASK;
-	set_memory_ro(ro_start, (ro_end - ro_start) >> PAGE_SHIFT);
+	__set_memory((unsigned long) _stext,
+		     (_etext - _stext) >> PAGE_SHIFT,
+		     SET_MEMORY_RO | SET_MEMORY_X);
+	__set_memory((unsigned long) _etext,
+		     (_eshared - _etext) >> PAGE_SHIFT,
+		     SET_MEMORY_RO);
+	__set_memory((unsigned long) _sinittext,
+		     (_einittext - _sinittext) >> PAGE_SHIFT,
+		     SET_MEMORY_RO | SET_MEMORY_X);
+	pr_info("Write protected kernel read-only data: %luk\n",
+		(_eshared - _stext) >> 10);
 }
 
 /*
