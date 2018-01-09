@@ -92,6 +92,7 @@ struct kvm_stats_debugfs_item debugfs_entries[] = {
 	{ "instruction_stsi", VCPU_STAT(instruction_stsi) },
 	{ "instruction_stfl", VCPU_STAT(instruction_stfl) },
 	{ "instruction_tprot", VCPU_STAT(instruction_tprot) },
+	{ "instruction_sthyi", VCPU_STAT(instruction_sthyi) },
 	{ "instruction_sigp_sense", VCPU_STAT(instruction_sigp_sense) },
 	{ "instruction_sigp_sense_running", VCPU_STAT(instruction_sigp_sense_running) },
 	{ "instruction_sigp_external_call", VCPU_STAT(instruction_sigp_external_call) },
@@ -1156,6 +1157,9 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	kvm_s390_get_cpu_id(&kvm->arch.model.cpu_id);
 	kvm->arch.model.ibc = sclp.ibc & 0x0fff;
 
+	set_kvm_facility(kvm->arch.model.fac->mask, 74);
+	set_kvm_facility(kvm->arch.model.fac->list, 74);
+
 	if (kvm_s390_crypto_init(kvm) < 0)
 		goto out_err;
 
@@ -1438,6 +1442,8 @@ int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu)
 		vcpu->arch.sie_block->ecd |= 0x20000000;
 	}
 	vcpu->arch.sie_block->ictl |= ICTL_ISKE | ICTL_SSKE | ICTL_RRBE;
+	if (test_kvm_facility(vcpu->kvm, 74))
+		vcpu->arch.sie_block->ictl |= ICTL_OPEREXC;
 
 	if (vcpu->kvm->arch.use_cmma) {
 		rc = kvm_s390_vcpu_setup_cmma(vcpu);
