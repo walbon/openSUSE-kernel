@@ -273,8 +273,12 @@ static inline int is_module_addr(void *addr)
 #define _REGION3_ENTRY_ORIGIN_LARGE ~0x7fffffffUL /* large page address	     */
 #define _REGION3_ENTRY_ORIGIN  ~0x7ffUL/* region third table origin	     */
 
-#define _REGION3_ENTRY_LARGE	0x400	/* RTTE-format control, large page  */
 #define _REGION3_ENTRY_RO	0x200	/* page protection bit		    */
+#define _REGION3_ENTRY_DIRTY	0x2000	/* SW region dirty bit */
+#define _REGION3_ENTRY_YOUNG	0x1000	/* SW region young bit */
+#define _REGION3_ENTRY_LARGE	0x0400	/* RTTE-format control, large page  */
+#define _REGION3_ENTRY_READ	0x0002	/* SW region read bit */
+#define _REGION3_ENTRY_WRITE	0x0001	/* SW region write bit */
 
 #define _REGION_ENTRY_BITS	0xfffffffffffff227UL
 #define _REGION_ENTRY_BITS_LARGE 0xffffffff8000fe27UL
@@ -413,6 +417,33 @@ static inline void csp(unsigned int *ptr, unsigned int old, unsigned int new)
 				 _SEGMENT_ENTRY_READ)
 #define SEGMENT_WRITE	__pgprot(_SEGMENT_ENTRY_READ | \
 				 _SEGMENT_ENTRY_WRITE)
+#define SEGMENT_KERNEL	__pgprot(_SEGMENT_ENTRY |	\
+				 _SEGMENT_ENTRY_LARGE |	\
+				 _SEGMENT_ENTRY_READ |	\
+				 _SEGMENT_ENTRY_WRITE | \
+				 _SEGMENT_ENTRY_YOUNG | \
+				 _SEGMENT_ENTRY_DIRTY)
+#define SEGMENT_KERNEL_RO __pgprot(_SEGMENT_ENTRY |	\
+				 _SEGMENT_ENTRY_LARGE |	\
+				 _SEGMENT_ENTRY_READ |	\
+				 _SEGMENT_ENTRY_YOUNG |	\
+				 _SEGMENT_ENTRY_PROTECT)
+
+/*
+ * Region3 entry (large page) protection definitions.
+ */
+
+#define REGION3_KERNEL	__pgprot(_REGION_ENTRY_TYPE_R3 | \
+				 _REGION3_ENTRY_LARGE |	 \
+				 _REGION3_ENTRY_READ |	 \
+				 _REGION3_ENTRY_WRITE |	 \
+				 _REGION3_ENTRY_YOUNG |	 \
+				 _REGION3_ENTRY_DIRTY)
+#define REGION3_KERNEL_RO __pgprot(_REGION_ENTRY_TYPE_R3 | \
+				   _REGION3_ENTRY_LARGE |  \
+				   _REGION3_ENTRY_READ |   \
+				   _REGION3_ENTRY_YOUNG |  \
+				   _REGION_ENTRY_PROTECT)
 
 static inline int mm_has_pgste(struct mm_struct *mm)
 {
