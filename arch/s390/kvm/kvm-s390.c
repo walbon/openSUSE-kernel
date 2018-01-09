@@ -120,6 +120,7 @@ struct kvm_stats_debugfs_item debugfs_entries[] = {
 unsigned long kvm_s390_fac_list_mask[] = {
 	0xffe6fffbfcfdfc40UL,
 	0x005e800000000000UL,
+	0x3000000000000000UL,
 };
 
 unsigned long kvm_s390_fac_list_mask_size(void)
@@ -1416,6 +1417,8 @@ int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu)
 		vcpu->arch.sie_block->ecb |= 0x10;
 
 	vcpu->arch.sie_block->ecb2  = 8;
+	if (test_kvm_facility(vcpu->kvm, 130))
+		vcpu->arch.sie_block->ecb2 |= 0x20;
 	vcpu->arch.sie_block->eca   = 0xC1002000U;
 	if (sclp.has_siif)
 		vcpu->arch.sie_block->eca |= 1;
