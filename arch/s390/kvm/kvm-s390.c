@@ -120,8 +120,8 @@ struct kvm_stats_debugfs_item debugfs_entries[] = {
 
 /* upper facilities limit for kvm */
 unsigned long kvm_s390_fac_list_mask[] = {
-	0xffe6fffbfcfdfc40UL,
-	0x005e800000000000UL,
+	0xffe6ffffffffffffUL,
+	0x005effffffffffffUL,
 	0x3000000000000000UL,
 };
 
