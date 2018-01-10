@@ -417,11 +417,10 @@ static int nvme_loop_configure_admin_queue(struct nvme_loop_ctrl *ctrl)
 	error = nvmf_connect_admin_queue(&ctrl->ctrl);
 	if (error)
 		goto out_cleanup_queue;
+	set_bit(NVME_LOOP_Q_LIVE, &ctrl->queues[0].flags);
 
 	error = nvmf_reg_read64(&ctrl->ctrl, NVME_REG_CAP, &ctrl->cap);
 	if (error) {
-	set_bit(NVME_LOOP_Q_LIVE, &ctrl->queues[0].flags);
-
 		dev_err(ctrl->ctrl.device,
 			"prop_get NVME_REG_CAP failed\n");
 		goto out_cleanup_queue;
