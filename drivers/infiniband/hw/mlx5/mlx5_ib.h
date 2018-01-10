@@ -110,6 +110,8 @@ enum {
 struct mlx5_ib_vma_private_data {
 	struct list_head list;
 	struct vm_area_struct *vma;
+	/* protect vma_private_list add/del */
+	struct mutex *vma_private_list_mutex;
 };
 
 struct mlx5_ib_ucontext {
@@ -124,6 +126,8 @@ struct mlx5_ib_ucontext {
 	/* Transport Domain number */
 	u32			tdn;
 	struct list_head	vma_private_list;
+	/* protect vma_private_list add/del */
+	struct mutex		vma_private_list_mutex;
 
 	unsigned long		upd_xlt_page;
 	/* protect ODP/KSM */
