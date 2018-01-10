@@ -114,9 +114,9 @@
 #include <asm/prom.h>
 #include <asm/microcode.h>
 #include <asm/mmu_context.h>
+#include <asm/kaiser.h>
 
 #include <asm/suspend.h>
-#include <asm/kaiser.h>
 
 /*
  * max_low_pfn_mapped: highest direct mapped pfn under 4GB

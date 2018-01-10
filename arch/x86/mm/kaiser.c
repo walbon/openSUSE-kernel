@@ -11,6 +11,9 @@
 #include <linux/uaccess.h>
 #include <linux/ftrace.h>
 
+#undef pr_fmt
+#define pr_fmt(fmt)     "Kernel/User page tables isolation: " fmt
+
 #include <asm/kaiser.h>
 #include <asm/tlbflush.h>	/* to verify its kaiser declarations */
 #include <asm/pgtable.h>
@@ -300,7 +303,7 @@ enable:
 	return;
 
 disable:
-	pr_info("Kernel/User page tables isolation: disabled\n");
+	pr_info("disabled\n");
 
 silent_disable:
 	kaiser_enabled = 0;
@@ -373,6 +376,8 @@ void __init kaiser_init(void)
 	kaiser_add_user_map_early(&debug_idt_table,
 				  sizeof(gate_desc) * NR_VECTORS,
 				  __PAGE_KERNEL);
+
+	pr_info("enabled\n");
 }
 
 /* Add a mapping to the shadow mapping, and synchronize the mappings */
@@ -429,7 +434,8 @@ pgd_t kaiser_set_shadow_pgd(pgd_t *pgdp, pgd_t pgd)
 			 * get out to userspace running on the kernel CR3,
 			 * userspace will crash instead of running.
 			 */
-			pgd.pgd |= _PAGE_NX;
+			if (__supported_pte_mask & _PAGE_NX)
+				pgd.pgd |= _PAGE_NX;
 		}
 	} else if (!pgd.pgd) {
 		/*
