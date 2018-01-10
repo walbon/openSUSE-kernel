@@ -570,8 +570,15 @@ static void pSeries_setup_rfi_flush(void)
 		if (!(behaviour & H_GET_CPU_CHAR_BEHAV_L1_FLUSH_LOW_PRIV))
 			enable = false;
 	} else {
-		/* Default to fallback if case hcall is not available */
-		types = L1D_FLUSH_FALLBACK;
+		if (pvr_version_is(PVR_POWER7) || pvr_version_is(PVR_POWER7p))
+			types = L1D_FLUSH_NONE;
+		else if (pvr_version_is(PVR_POWER8E) || pvr_version_is(PVR_POWER8NVL) ||
+				pvr_version_is(PVR_POWER8))
+			types = L1D_FLUSH_ORI;
+		else {
+			/* Default to fallback if case hcall is not available */
+			types = L1D_FLUSH_FALLBACK;
+		}
 	}
 
 	setup_rfi_flush(types, enable);
