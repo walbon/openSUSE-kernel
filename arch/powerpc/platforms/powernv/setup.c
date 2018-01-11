@@ -44,15 +44,8 @@ static void pnv_setup_rfi_flush(void)
 	enum l1d_flush_type type;
 	int enable;
 
-	if (pvr_version_is(PVR_POWER7) || pvr_version_is(PVR_POWER7p))
-		type = L1D_FLUSH_NONE;
-	else if (pvr_version_is(PVR_POWER8E) || pvr_version_is(PVR_POWER8NVL) ||
-			pvr_version_is(PVR_POWER8))
-		type = L1D_FLUSH_ORI;
-	else {
-		/* Default to fallback in case fw-features are not available */
-		type = L1D_FLUSH_FALLBACK;
-	}
+	/* Default to fallback in case fw-features are not available */
+	type = L1D_FLUSH_FALLBACK;
 	enable = 1;
 
 	np = of_find_node_by_name(NULL, "ibm,opal");
