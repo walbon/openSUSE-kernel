@@ -545,7 +545,7 @@ static void __init find_and_init_phbs(void)
 	of_pci_check_probe_only();
 }
 
-static void pSeries_setup_rfi_flush(void)
+void pseries_setup_rfi_flush(void)
 {
 	unsigned long character, behaviour, rc;
 	enum l1d_flush_type types;
@@ -600,7 +600,7 @@ static void __init pSeries_setup_arch(void)
 
 	fwnmi_init();
 
-	pSeries_setup_rfi_flush();
+	pseries_setup_rfi_flush();
 
 	/* By default, only probe PCI (can be overriden by rtas_pci) */
 	pci_add_flags(PCI_PROBE_ONLY);
