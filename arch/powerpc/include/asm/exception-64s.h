@@ -36,6 +36,7 @@
  */
 #include <asm/bug.h>
 
+/* PACA save area offsets (exgen, exmc, etc) */
 #define EX_R9		0
 #define EX_R10		8
 #define EX_R11		16

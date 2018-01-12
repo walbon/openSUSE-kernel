@@ -99,9 +99,9 @@ struct paca_struct {
 	 * Now, starting in cacheline 2, the exception save areas
 	 */
 	/* used for most interrupts/exceptions */
-	u64 exgen[13] __attribute__((aligned(0x80)));
-	u64 exmc[13];		/* used for machine checks */
-	u64 exslb[13];		/* used for SLB/segment table misses
+	u64 exgen[EX_SIZE] __attribute__((aligned(0x80)));
+	u64 exmc[EX_SIZE];		/* used for machine checks */
+	u64 exslb[EX_SIZE];		/* used for SLB/segment table misses
  				 * on the linear mapping */
 	/* SLB related definitions */
 	u16 vmalloc_sllp;
