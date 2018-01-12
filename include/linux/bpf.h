@@ -37,7 +37,9 @@ struct bpf_map {
 	u32 value_size;
 	u32 max_entries;
 	u32 pages;
+#ifndef __GENKSYMS__
 	bool unpriv_array;
+#endif
 	struct user_struct *user;
 	const struct bpf_map_ops *ops;
 	struct work_struct work;
