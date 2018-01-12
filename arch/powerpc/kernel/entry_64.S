@@ -43,7 +43,6 @@
 #include <asm/exception-64e.h>
 #endif
 
-
 /*
  * System calls.
  */
@@ -370,7 +369,6 @@ tabort_syscall:
 	mtmsrd	r10, 1
 	mtspr	SPRN_SRR0, r11
 	mtspr	SPRN_SRR1, r12
-
 	RFI_TO_USER
 	b	.	/* prevent speculative execution */
 #endif
