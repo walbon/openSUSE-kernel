@@ -1590,8 +1590,8 @@ slb_miss_realmode:
 	andi.	r10,r12,MSR_RI	/* check for unrecoverable exception */
 	beq-	2f
 
-	andi.	r10,r12,MSR_PR	 /* check for exception from userspace */
-	beq	1f 	/* returning to kernel */
+	andi.	r10,r12,MSR_PR	/* check for exception from userspace */
+	beq	1f	/* returning to kernel */
 
 .machine	push
 .machine	"power4"
