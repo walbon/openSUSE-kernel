@@ -183,9 +183,9 @@ static inline int nvmf_check_init_req(struct nvme_ctrl *ctrl,
 		if (ctrl->state == NVME_CTRL_RECONNECTING ||
 		    ctrl->state == NVME_CTRL_DELETING) {
 			nvme_req(rq)->status = NVME_SC_ABORT_REQ;
-			return -EIO;
+			return BLK_MQ_RQ_QUEUE_ERROR;
 		}
-		return -EAGAIN; /* try again later */
+		return BLK_MQ_RQ_QUEUE_BUSY; /* try again later */
 	}
 
 	return 0;
