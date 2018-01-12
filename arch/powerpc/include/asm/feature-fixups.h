@@ -184,14 +184,14 @@ label##3:					       	\
 	FTR_ENTRY_OFFSET label##1b-label##3b;		\
 	.popsection;
 
-
-#define RFI_FLUSH_FIXUP_SECTION			\
-951:						\
-	.pushsection __rfi_flush_fixup,"a";	\
-	.align 2;				\
-952:						\
-	FTR_ENTRY_OFFSET 951b-952b;		\
+#define RFI_FLUSH_FIXUP_SECTION				\
+951:							\
+	.pushsection __rfi_flush_fixup,"a";		\
+	.align 2;					\
+952:							\
+	FTR_ENTRY_OFFSET 951b-952b;			\
 	.popsection;
+
 
 #ifndef __ASSEMBLY__
 #include <linux/types.h>

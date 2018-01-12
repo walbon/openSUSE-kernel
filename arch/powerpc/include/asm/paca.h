@@ -199,14 +199,12 @@ struct paca_struct {
 #endif
 #ifndef __GENKSYMS__
 #ifdef CONFIG_PPC_BOOK3S_64
-
-	void *rfi_flush_fallback_area;
-
 	/*
 	 * rfi fallback flush must be in its own cacheline to prevent
 	 * other paca data leaking into the L1d
 	 */
 	u64 exrfi[EX_SIZE] __aligned(0x80);
+	void *rfi_flush_fallback_area;
 	u64 l1d_flush_congruence;
 	u64 l1d_flush_sets;
 #endif

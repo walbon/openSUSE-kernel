@@ -81,7 +81,6 @@ SECTIONS
 	}
 #endif
 
-
 	EXCEPTION_TABLE(0)
 
 	NOTES :kernel :notes

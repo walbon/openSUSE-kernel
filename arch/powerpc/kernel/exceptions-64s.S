@@ -739,13 +739,14 @@ rfi_flush_fallback:
 	/*
 	 * The load adresses are at staggered offsets within cachelines,
 	 * which suits some pipelines better (on others it should not
-	 * hurt.
+	 * hurt).
 	 */
 	addi	r12,r12,8
 	mtctr	r11
 	DCBT_STOP_ALL_STREAM_IDS(r11) /* Stop prefetch streams */
+
 	/* order ld/st prior to dcbt stop all streams with flushing */
-	hwsync
+	sync
 1:	li	r8,0
 	.rept	8 /* 8-way set associative */
 	ldx	r11,r10,r8
@@ -781,14 +782,14 @@ hrfi_flush_fallback:
 	/*
 	 * The load adresses are at staggered offsets within cachelines,
 	 * which suits some pipelines better (on others it should not
-	 * hurt.
+	 * hurt).
 	 */
 	addi	r12,r12,8
 	mtctr	r11
 	DCBT_STOP_ALL_STREAM_IDS(r11) /* Stop prefetch streams */
 
 	/* order ld/st prior to dcbt stop all streams with flushing */
-	hwsync
+	sync
 1:	li	r8,0
 	.rept	8 /* 8-way set associative */
 	ldx	r11,r10,r8
@@ -807,7 +808,6 @@ hrfi_flush_fallback:
 	ld	r8,PACA_EXRFI+EX_R13(r13)
 	GET_SCRATCH0(r13);
 	hrfid
-
 
 #ifdef __DISABLED__
 /*

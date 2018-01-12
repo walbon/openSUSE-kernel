@@ -55,8 +55,10 @@
 #define EX_SIZE		13	/* size in u64 units */
 
 /*
+ * Macros for annotating the expected destination of (h)rfid
+ *
  * The nop instructions allow us to insert one or more instructions to flush the
- * L1-D cache when return to userspace or a guest.
+ * L1-D cache when returning to userspace or a guest.
  */
 #define RFI_FLUSH_SLOT							\
 	RFI_FLUSH_FIXUP_SECTION;					\
@@ -75,8 +77,6 @@
 #else
 #define CHECK_TARGET_MSR_PR(srr_reg, expected_pr)
 #endif
-
-/* Macros for annotating the expected destination of (h)rfid */
 
 #define RFI_TO_KERNEL							\
 	CHECK_TARGET_MSR_PR(SPRN_SRR1, 0);				\
