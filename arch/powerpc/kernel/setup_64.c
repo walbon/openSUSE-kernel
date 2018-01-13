@@ -940,7 +940,8 @@ void __init setup_rfi_flush(enum l1d_flush_type types, bool enable)
 		pr_info("rfi-flush: Using mttrig type flush\n");
 
 	enabled_flush_types = types;
+
 	if (!no_rfi_flush)
 		rfi_flush_enable(enable);
 }
-#endif
+#endif /* CONFIG_PPC_BOOK3S_64 */
