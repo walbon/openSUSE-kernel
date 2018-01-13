@@ -910,6 +910,7 @@ static void init_fallback_flush(void)
 	memset(l1d_flush_fallback_area, 0, l1d_size * 2);
 
 	for_each_possible_cpu(cpu) {
+		struct paca_aux_struct *paca_aux = paca[cpu].aux_ptr;
 		/*
 		 * The fallback flush is currently coded for 8-way
 		 * associativity. Different associativity is possible, but it
@@ -920,9 +921,9 @@ static void init_fallback_flush(void)
 		 */
 		u64 c = l1d_size / 8;
 
-		paca[cpu].rfi_flush_fallback_area = l1d_flush_fallback_area;
-		paca[cpu].l1d_flush_congruence = c;
-		paca[cpu].l1d_flush_sets = c / 128;
+		paca_aux->rfi_flush_fallback_area = l1d_flush_fallback_area;
+		paca_aux->l1d_flush_congruence = c;
+		paca_aux->l1d_flush_sets = c / 128;
 	}
 }
 

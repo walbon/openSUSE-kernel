@@ -48,6 +48,23 @@ extern unsigned int debug_smp_processor_id(void); /* from linux/smp.h */
 struct task_struct;
 
 /*
+ * This is pointed to by paca->aux_ptr, for the purpose of extending the
+ * paca structure without kABI breakage.
+ */
+#ifdef CONFIG_PPC_STD_MMU_64
+struct paca_aux_struct {
+	/*
+	 * rfi fallback flush must be in its own cacheline to prevent
+	 * other paca data leaking into the L1d
+	 */
+	u64 exrfi[EX_SIZE] __aligned(0x80);
+	void *rfi_flush_fallback_area;
+	u64 l1d_flush_congruence;
+	u64 l1d_flush_sets;
+};
+#endif
+
+/*
  * Defines the layout of the paca.
  *
  * This structure is not directly accessed by firmware or the service
@@ -95,6 +112,14 @@ struct paca_struct {
 	u64 dscr_default;		/* per-CPU default DSCR */
 
 #ifdef CONFIG_PPC_STD_MMU_64
+#ifndef __GENKSYMS__
+	/*
+	 * Because of alignment of exgen there is a hole here, we use that hole
+	 * for the aux_ptr and so don't change the size of the paca or the
+	 * location of any members.
+	 */
+	struct paca_aux_struct *aux_ptr;
+#endif /* __GENKSYMS__ */
 	/*
 	 * Now, starting in cacheline 2, the exception save areas
 	 */
@@ -196,18 +221,6 @@ struct paca_struct {
 	struct kvmppc_book3s_shadow_vcpu shadow_vcpu;
 #endif
 	struct kvmppc_host_state kvm_hstate;
-#endif
-#ifndef __GENKSYMS__
-#ifdef CONFIG_PPC_BOOK3S_64
-	/*
-	 * rfi fallback flush must be in its own cacheline to prevent
-	 * other paca data leaking into the L1d
-	 */
-	u64 exrfi[EX_SIZE] __aligned(0x80);
-	void *rfi_flush_fallback_area;
-	u64 l1d_flush_congruence;
-	u64 l1d_flush_sets;
-#endif
 #endif
 };
 
