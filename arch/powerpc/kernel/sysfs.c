@@ -18,7 +18,6 @@
 #include <asm/smp.h>
 #include <asm/pmc.h>
 #include <asm/firmware.h>
-#include <asm/ppc_asm.h>
 
 #include "cacheinfo.h"
 
