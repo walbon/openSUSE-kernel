@@ -38,6 +38,7 @@
 #include <asm/setup.h>
 
 #include "powernv.h"
+
 static void pnv_setup_rfi_flush(void)
 {
 	struct device_node *np, *fw_features;
