@@ -556,6 +556,15 @@ int scsi_check_sense(struct scsi_cmnd *scmd)
 			 * can be recovered by retry.
 			 */
 			return ADD_TO_MLQUEUE;
+		} else if (!strncmp(scmd->device->vendor, "FUJITSU", 7) &&
+			   !strncmp(scmd->device->model, "ETERNUS_DXM", 11) &&
+			   (sshdr.asc == 0xc1) && (sshdr.ascq == 0x1)) {
+			/*
+			 * Fujitsu Eternus uses this vendor specific code
+			 * to indicate an internal reconfiguration status
+			 * which can be recovered with a retry.
+			 */
+			return ADD_TO_MLQUEUE;
 		}
 		return NEEDS_RETRY;
 	case NOT_READY:
