@@ -26,6 +26,7 @@
 #include <linux/tracehook.h>
 #include <linux/ratelimit.h>
 
+#include <asm/daifflags.h>
 #include <asm/debug-monitors.h>
 #include <asm/elf.h>
 #include <asm/cacheflush.h>
@@ -402,15 +403,34 @@ static void do_signal(struct pt_regs *regs)
 asmlinkage void do_notify_resume(struct pt_regs *regs,
 				 unsigned int thread_flags)
 {
-	if (thread_flags & _TIF_SIGPENDING)
-		do_signal(regs);
+	/*
+	 * The assembly code enters us with IRQs off, but it hasn't
+	 * informed the tracing code of that for efficiency reasons.
+	 * Update the trace code with the current status.
+	 */
+	trace_hardirqs_off();
+	do {
+		if (thread_flags & _TIF_NEED_RESCHED) {
+			/* Unmask Debug and SError for the next task */
+			local_daif_restore(DAIF_PROCCTX_NOIRQ);
 
-	if (thread_flags & _TIF_NOTIFY_RESUME) {
-		clear_thread_flag(TIF_NOTIFY_RESUME);
-		tracehook_notify_resume(regs);
-	}
+			schedule();
+		} else {
+			local_daif_restore(DAIF_PROCCTX);
 
-	if (thread_flags & _TIF_FOREIGN_FPSTATE)
-		fpsimd_restore_current_state();
+			if (thread_flags & _TIF_SIGPENDING)
+				do_signal(regs);
 
+			if (thread_flags & _TIF_NOTIFY_RESUME) {
+				clear_thread_flag(TIF_NOTIFY_RESUME);
+				tracehook_notify_resume(regs);
+			}
+
+			if (thread_flags & _TIF_FOREIGN_FPSTATE)
+				fpsimd_restore_current_state();
+		}
+
+		local_daif_mask();
+		thread_flags = READ_ONCE(current_thread_info()->flags);
+	} while (thread_flags & _TIF_WORK_MASK);
 }
