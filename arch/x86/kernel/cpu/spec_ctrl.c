@@ -10,9 +10,11 @@
 
 /*
  * Keep it open for more flags in case needed.
+ *
+ * -1 means "not touched by nospec() earlyparam"
  */
-static unsigned int ibrs_state = 0;
-static unsigned int ibpb_state = 0;
+static int ibrs_state = -1;
+static int ibpb_state = -1;
 
 unsigned int notrace x86_ibrs_enabled(void)
 {
@@ -55,28 +57,47 @@ EXPORT_SYMBOL_GPL(stuff_RSB);
  */
 void x86_spec_check(void)
 {
+
+	if (ibrs_state == 0 || ibpb_state == 0) {
+		printk_once(KERN_INFO "IBRS/IBPB: disabled or not present\n");
+		return;
+	}
+
 	if (cpuid_edx(7) & BIT(26)) {
 		ibrs_state = 1;
 		ibpb_state = 1;
 
 		setup_force_cpu_cap(X86_FEATURE_SPEC_CTRL);
+
+		printk_once(KERN_INFO "IBRS/IBPB: Initialized\n");
 	}
 
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
 		if (cpuid_ebx(0x80000008) & BIT(12)) {
 			ibpb_state = 1;
+			printk_once(KERN_INFO "IBPB: Initialized\n");
 		} else {
 			switch (boot_cpu_data.x86) {
 			case 0x10:
 			case 0x12:
 			case 0x16:
-				pr_info_once("Disabling indirect branch predictor support\n");
+				printk_once(KERN_INFO
+					"IBPB: Disabling indirect branch predictor support\n");
 				msr_set_bit(MSR_F15H_IC_CFG, 14);
 				break;
 			}
 			ibpb_state = 0;
 		}
 	}
+
+	/*
+	 * make sure we always run with the flags set to zero when it's
+	 * either disabled or not-present
+	 */
+	if (ibpb_state == -1)
+		ibpb_state = 0;
+	if (ibrs_state == -1)
+		ibrs_state = 0;
 }
 EXPORT_SYMBOL_GPL(x86_spec_check);
 
