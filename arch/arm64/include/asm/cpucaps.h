@@ -41,7 +41,8 @@
 #define ARM64_HAS_NO_BCAST_TLBI                 19 /* Out of tree */
 #define ARM64_WORKAROUND_CAVIUM_30115		20
 #define ARM64_HARDEN_BRANCH_PREDICTOR		21
+#define ARM64_HARDEN_BP_POST_GUEST_EXIT		22
 
-#define ARM64_NCAPS				22
+#define ARM64_NCAPS				23
 
 #endif /* __ASM_CPUCAPS_H */
