@@ -94,7 +94,7 @@ static inline void efi_set_pgd(struct mm_struct *mm)
 			 * until uaccess_enable(). Restore the current
 			 * thread's saved ttbr0 corresponding to its active_mm
 			 */
-			cpu_set_reserved_ttbr0();
+			uaccess_ttbr0_disable();
 			update_saved_ttbr0(current, current->active_mm);
 		}
 	}
