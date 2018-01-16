@@ -16,7 +16,6 @@ void entry_SYSENTER_compat(void);
 
 void x86_configure_nx(void);
 void x86_report_nx(void);
-void stuff_rsb(void);
 
 extern int reboot_force;
 

@@ -43,6 +43,7 @@
 #include <asm/desc.h>
 #include <asm/debugreg.h>
 #include <asm/kvm_para.h>
+#include <asm/nospec-branch.h>
 #include <asm/irq_remapping.h>
 #include <asm/spec_ctrl.h>
 
@@ -4960,7 +4961,8 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 			wrmsrl(MSR_IA32_SPEC_CTRL, FEATURE_ENABLE_IBRS);
 	}
 
-	stuff_RSB();
+	/* Eliminate branch target predictions from guest mode */
+	vmexit_fill_RSB();
 
 #ifdef CONFIG_X86_64
 	wrmsrl(MSR_GS_BASE, svm->host.gs_base);

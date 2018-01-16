@@ -48,8 +48,8 @@
 #include <asm/kexec.h>
 #include <asm/apic.h>
 #include <asm/irq_remapping.h>
+#include <asm/nospec-branch.h>
 #include <asm/spec_ctrl.h>
-#include <asm/proto.h>
 
 #include "trace.h"
 #include "pmu.h"
@@ -8777,7 +8777,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 	      );
 
-	stuff_RSB();
+	/* Eliminate branch target predictions from guest mode */
+	vmexit_fill_RSB();
 
 	/* MSR_IA32_DEBUGCTLMSR is zeroed on vmexit. Restore it if needed */
 	if (debugctlmsr)

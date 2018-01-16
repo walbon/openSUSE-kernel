@@ -21,6 +21,7 @@
 #include <asm/hypervisor.h>
 #include <asm/hyperv.h>
 #include <asm/mshyperv.h>
+#include <asm/nospec-branch.h>
 #include <linux/version.h>
 #include <linux/vmalloc.h>
 #include <linux/mm.h>
@@ -206,9 +207,10 @@ u64 hv_do_hypercall(u64 control, void *input, void *output)
 		return (u64)ULLONG_MAX;
 
 	__asm__ __volatile__("mov %0, %%r8" : : "r" (output_address) : "r8");
-	__asm__ __volatile__("call *%3" : "=a" (hv_status) :
+	__asm__ __volatile__(CALL_NOSPEC :
+			     "=a" (hv_status) :
 			     "c" (control), "d" (input_address),
-			     "m" (hypercall_pg));
+			     THUNK_TARGET(hypercall_pg));
 
 	return hv_status;
 
@@ -226,11 +228,12 @@ u64 hv_do_hypercall(u64 control, void *input, void *output)
 	if (!hypercall_pg)
 		return (u64)ULLONG_MAX;
 
-	__asm__ __volatile__ ("call *%8" : "=d"(hv_status_hi),
+	__asm__ __volatile__ (CALL_NOSPEC : "=d"(hv_status_hi),
 			      "=a"(hv_status_lo) : "d" (control_hi),
 			      "a" (control_lo), "b" (input_address_hi),
 			      "c" (input_address_lo), "D"(output_address_hi),
-			      "S"(output_address_lo), "m" (hypercall_pg));
+			      "S"(output_address_lo),
+			      THUNK_TARGET(hypercall_pg));
 
 	return hv_status_lo | ((u64)hv_status_hi << 32);
 #endif /* !x86_64 */
