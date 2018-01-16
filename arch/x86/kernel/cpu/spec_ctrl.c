@@ -20,6 +20,7 @@ unsigned int notrace x86_ibrs_enabled(void)
 {
 	if (ibrs_state != 1)
 		return 0;
+	return 1;
 }
 EXPORT_SYMBOL_GPL(x86_ibrs_enabled);
 
@@ -27,6 +28,7 @@ unsigned int notrace x86_ibpb_enabled(void)
 {
 	if (ibpb_state != 1)
 		return 0;
+	return 1;
 }
 EXPORT_SYMBOL_GPL(x86_ibpb_enabled);
 
