@@ -18,13 +18,15 @@ static int ibpb_state = -1;
 
 unsigned int notrace x86_ibrs_enabled(void)
 {
-	return ibrs_state;
+	if (ibrs_state != 1)
+		return 0;
 }
 EXPORT_SYMBOL_GPL(x86_ibrs_enabled);
 
 unsigned int notrace x86_ibpb_enabled(void)
 {
-	return ibpb_state;
+	if (ibpb_state != 1)
+		return 0;
 }
 EXPORT_SYMBOL_GPL(x86_ibpb_enabled);
 
@@ -59,7 +61,7 @@ void x86_spec_check(void)
 {
 
 	if (ibrs_state == 0 || ibpb_state == 0) {
-		printk_once(KERN_INFO "IBRS/IBPB: disabled or not present\n");
+		printk_once(KERN_INFO "IBRS/IBPB: disabled\n");
 		return;
 	}
 
@@ -89,15 +91,6 @@ void x86_spec_check(void)
 			ibpb_state = 0;
 		}
 	}
-
-	/*
-	 * make sure we always run with the flags set to zero when it's
-	 * either disabled or not-present
-	 */
-	if (ibpb_state == -1)
-		ibpb_state = 0;
-	if (ibrs_state == -1)
-		ibrs_state = 0;
 }
 EXPORT_SYMBOL_GPL(x86_spec_check);
 
