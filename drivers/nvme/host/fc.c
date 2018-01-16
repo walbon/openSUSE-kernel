@@ -2966,6 +2966,9 @@ nvme_fc_delete_association(struct nvme_fc_ctrl *ctrl)
 	nvme_fc_free_queue(&ctrl->queues[0]);
 
 	nvme_fc_ctlr_inactive_on_rport(ctrl);
+
+	/* re-enable the admin_q so anything new can fast fail */
+	blk_mq_start_stopped_hw_queues(ctrl->ctrl.admin_q, true);
 }
 
 static void
@@ -2982,6 +2985,9 @@ nvme_fc_delete_ctrl_work(struct work_struct *work)
 	 * waiting for io to terminate
 	 */
 	nvme_fc_delete_association(ctrl);
+
+	/* resume the io queues so that things will fail */
+	nvme_start_queues(&ctrl->ctrl);
 
 	/*
 	 * tear down the controller
