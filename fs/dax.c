@@ -818,7 +818,7 @@ static int dax_insert_mapping(struct address_space *mapping,
 }
 
 /**
- * __dax_fault - handle a page fault on a DAX file
+ * __dax_fault2 - handle a page fault on a DAX file
  * @vma: The virtual memory area where the fault occurred
  * @vmf: The description of the fault
  * @get_block: The filesystem method used to translate file offsets to blocks
@@ -827,8 +827,8 @@ static int dax_insert_mapping(struct address_space *mapping,
  * fault handler for DAX files. __dax_fault() assumes the caller has done all
  * the necessary locking for the page fault to proceed successfully.
  */
-int __dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf,
-			get_block_t get_block)
+int __dax_fault2(struct vm_area_struct *vma, struct vm_fault *vmf,
+		 int *map_errp, get_block_t get_block)
 {
 	struct file *file = vma->vm_file;
 	struct address_space *mapping = file->f_mapping;
@@ -864,8 +864,11 @@ int __dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf,
 	error = get_block(inode, block, &bh, 0);
 	if (!error && (bh.b_size < PAGE_SIZE))
 		error = -EIO;		/* fs corruption? */
-	if (error)
+	if (error) {
+		if (map_errp)
+			*map_errp = error;
 		goto unlock_entry;
+	}
 
 	if (vmf->cow_page) {
 		struct page *new_page = vmf->cow_page;
@@ -891,8 +894,11 @@ int __dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf,
 			major = VM_FAULT_MAJOR;
 			if (!error && (bh.b_size < PAGE_SIZE))
 				error = -EIO;
-			if (error)
+			if (error) {
+				if (map_errp)
+					*map_errp = error;
 				goto unlock_entry;
+			}
 		} else {
 			return dax_load_hole(mapping, entry, vmf);
 		}
@@ -910,6 +916,13 @@ int __dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf,
 	if ((error < 0) && (error != -EBUSY))
 		return VM_FAULT_SIGBUS | major;
 	return VM_FAULT_NOPAGE | major;
+}
+EXPORT_SYMBOL(__dax_fault2);
+
+int __dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf,
+		get_block_t get_block)
+{
+	return __dax_fault2(vma, vmf, NULL, get_block);
 }
 EXPORT_SYMBOL(__dax_fault);
 
