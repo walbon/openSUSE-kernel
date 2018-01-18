@@ -203,7 +203,8 @@ unlock_aio_mutex:
 #ifdef CONFIG_FS_DAX
 static int ext4_dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
-	int result;
+	int result, error = 0;
+	int retries = 0;
 	handle_t *handle = NULL;
 	struct inode *inode = file_inode(vma->vm_file);
 	struct super_block *sb = inode->i_sb;
@@ -226,6 +227,7 @@ static int ext4_dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		sb_start_pagefault(sb);
 		file_update_time(vma->vm_file);
 		down_read(&EXT4_I(inode)->i_mmap_sem);
+retry:
 		handle = ext4_journal_start_sb(sb, EXT4_HT_WRITE_PAGE,
 						EXT4_DATA_TRANS_BLOCKS(sb));
 	} else
@@ -234,11 +236,14 @@ static int ext4_dax_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	if (IS_ERR(handle))
 		result = VM_FAULT_SIGBUS;
 	else
-		result = __dax_fault(vma, vmf, ext4_dax_get_block);
+		result = __dax_fault2(vma, vmf, &error, ext4_dax_get_block);
 
 	if (write) {
 		if (!IS_ERR(handle))
 			ext4_journal_stop(handle);
+		if ((result & VM_FAULT_ERROR) && error == -ENOSPC &&
+		    ext4_should_retry_alloc(sb, &retries))
+			goto retry;
 		up_read(&EXT4_I(inode)->i_mmap_sem);
 		sb_end_pagefault(sb);
 	} else
