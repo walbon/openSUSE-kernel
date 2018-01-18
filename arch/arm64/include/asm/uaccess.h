@@ -141,7 +141,7 @@ static inline void set_fs(mm_segment_t fs)
 static inline void __uaccess_ttbr0_disable(void)
 {
 	unsigned long flags, ttbr;
-
+ 
 	local_irq_save(flags);
 	ttbr = read_sysreg(ttbr1_el1);
 	ttbr &= ~TTBR_ASID_MASK;
@@ -164,7 +164,7 @@ static inline void __uaccess_ttbr0_enable(void)
 	 * roll-over and an update of 'ttbr0'.
 	 */
 	local_irq_save(flags);
-	ttbr0 = current_thread_info()->ttbr0;
+	ttbr0 = READ_ONCE(current_thread_info()->ttbr0);
 
 	/* Restore active ASID */
 	ttbr1 = read_sysreg(ttbr1_el1);
