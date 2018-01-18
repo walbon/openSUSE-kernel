@@ -12,6 +12,7 @@
 #include <linux/cpu.h>
 
 #include <asm/nospec-branch.h>
+#include <asm/spec_ctrl.h>
 #include <asm/cmdline.h>
 #include <asm/bugs.h>
 #include <asm/processor.h>
@@ -150,6 +151,7 @@ static enum spectre_v2_mitigation_cmd __init spectre_v2_parse_cmdline(void)
 	if (!cmdline_find_option_bool(boot_command_line, "nospectre_v2"))
 		return SPECTRE_V2_CMD_AUTO;
 disable:
+	nospec("");
 	spec2_print_if_insecure("disabled on command line.");
 	return SPECTRE_V2_CMD_NONE;
 }
