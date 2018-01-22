@@ -278,6 +278,8 @@ ssize_t cpu_show_spectre_v2(struct device *dev,
 {
 	if (!boot_cpu_has_bug(X86_BUG_SPECTRE_V2))
 		return sprintf(buf, "Not affected\n");
+	if (boot_cpu_has(X86_FEATURE_SPEC_CTRL))
+		return sprintf(buf, "Mitigation: IBRS+IBPB\n");
 
 	return sprintf(buf, "%s\n", spectre_v2_strings[spectre_v2_enabled]);
 }
