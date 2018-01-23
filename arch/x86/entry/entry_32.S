@@ -260,7 +260,8 @@ ENTRY(ret_from_kernel_thread)
 	pushl	$0x0202				# Reset kernel eflags
 	popfl
 	movl	PT_EBP(%esp), %eax
-	CALL_NOSPEC PT_EBX(%esp)
+	movl	PT_EBX(%esp), %edx
+	CALL_NOSPEC %edx
 	movl	$0, PT_EAX(%esp)
 
 	/*
