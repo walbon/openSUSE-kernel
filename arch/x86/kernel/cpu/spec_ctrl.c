@@ -11,8 +11,11 @@
  * Keep it open for more flags in case needed.
  *
  * -1 means "not touched by nospec() earlyparam"
+ *
+ * If IBRS is set, IBPB is always set. IBPB can be set independently
+ * on IBRS state (SKL).
  */
-static int ibrs_state = -1;
+int ibrs_state = -1;
 static int ibpb_state = -1;
 
 unsigned int notrace x86_ibrs_enabled(void)
@@ -51,18 +54,21 @@ EXPORT_SYMBOL_GPL(x86_enable_ibrs);
 void x86_spec_check(void)
 {
 
-	if (ibrs_state == 0 || ibpb_state == 0) {
+	if (ibpb_state == 0) {
 		printk_once(KERN_INFO "IBRS/IBPB: disabled\n");
 		return;
 	}
 
 	if (cpuid_edx(7) & BIT(26)) {
-		ibrs_state = 1;
+		if (ibrs_state == -1) {
+			/* noone force-disabled IBRS */
+			ibrs_state = 1;
+			printk_once(KERN_INFO "IBRS: initialized\n");
+		}
+		printk_once(KERN_INFO "IBPB: initialized\n");
 		ibpb_state = 1;
 
 		setup_force_cpu_cap(X86_FEATURE_SPEC_CTRL);
-
-		printk_once(KERN_INFO "IBRS/IBPB: Initialized\n");
 	}
 
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
