@@ -12,6 +12,7 @@
 #include "writeback.h"
 
 #include <linux/delay.h>
+#include <linux/freezer.h>
 #include <linux/kthread.h>
 #include <trace/events/bcache.h>
 
@@ -224,6 +225,7 @@ static void read_dirty(struct cached_dev *dc)
 	 */
 
 	while (!kthread_should_stop()) {
+		try_to_freeze();
 
 		w = bch_keybuf_next(&dc->writeback_keys);
 		if (!w)
@@ -429,6 +431,7 @@ static int bch_writeback_thread(void *arg)
 			if (kthread_should_stop())
 				return 0;
 
+			try_to_freeze();
 			schedule();
 			continue;
 		}
