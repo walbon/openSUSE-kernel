@@ -169,7 +169,9 @@ struct kvm_sync_regs {
 	__u64 vrs[32][2];	/* vector registers */
 	__u8  reserved[512];	/* for future vector expansion */
 	__u32 fpc;	/* only valid with vector registers */
+#ifndef __GENKSYMS__
 	__u8 bpbc : 1;		/* bp mode */
+#endif
 };
 
 #define KVM_REG_S390_TODPR	(KVM_REG_S390 | KVM_REG_SIZE_U32 | 0x1)
