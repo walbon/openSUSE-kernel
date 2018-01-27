@@ -55,7 +55,7 @@ extern long do_no_restart_syscall(struct restart_block *parm);
 
 #ifdef __KERNEL__
 
-#ifdef CONFIG_DEBUG_STACK_USAGE
+#if defined(CONFIG_DEBUG_STACK_USAGE) || defined(CONFIG_PAGE_TABLE_ISOLATION)
 # define THREADINFO_GFP		(GFP_KERNEL | __GFP_NOTRACK | __GFP_ZERO)
 #else
 # define THREADINFO_GFP		(GFP_KERNEL | __GFP_NOTRACK)
