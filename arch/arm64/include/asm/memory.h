@@ -24,6 +24,7 @@
 #include <linux/compiler.h>
 #include <linux/const.h>
 #include <linux/types.h>
+#include <asm/page-def.h>
 #include <asm/bug.h>
 #include <asm/sizes.h>
 
