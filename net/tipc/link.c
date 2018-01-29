@@ -115,7 +115,8 @@ static int link_is_up(struct tipc_link *l)
 static int tipc_link_proto_rcv(struct tipc_link *l, struct sk_buff *skb,
 			       struct sk_buff_head *xmitq);
 static void tipc_link_build_proto_msg(struct tipc_link *l, int mtyp, bool probe,
-				      u16 rcvgap, int tolerance, int priority,
+				      bool probe_reply, u16 rcvgap,
+				      int tolerance, int priority,
 				      struct sk_buff_head *xmitq);
 static void link_reset_statistics(struct tipc_link *l_ptr);
 static void link_print(struct tipc_link *l_ptr, const char *str);
@@ -597,7 +598,7 @@ int tipc_link_timeout(struct tipc_link *l, struct sk_buff_head *xmitq)
 	}
 
 	if (xmit)
-		tipc_link_build_proto_msg(l, mtyp, prb, 0, 0, 0, xmitq);
+		tipc_link_build_proto_msg(l, mtyp, prb, 0, 0, 0, 0, xmitq);
 
 	return rc;
 }
@@ -985,7 +986,7 @@ int tipc_link_build_ack_msg(struct tipc_link *l, struct sk_buff_head *xmitq)
 	/* Unicast ACK */
 	l->rcv_unacked = 0;
 	l->stats.sent_acks++;
-	tipc_link_build_proto_msg(l, STATE_MSG, 0, 0, 0, 0, xmitq);
+	tipc_link_build_proto_msg(l, STATE_MSG, 0, 0, 0, 0, 0, xmitq);
 	return 0;
 }
 
@@ -998,7 +999,7 @@ void tipc_link_build_reset_msg(struct tipc_link *l, struct sk_buff_head *xmitq)
 	if (l->state == LINK_ESTABLISHING)
 		mtyp = ACTIVATE_MSG;
 
-	tipc_link_build_proto_msg(l, mtyp, 0, 0, 0, 0, xmitq);
+	tipc_link_build_proto_msg(l, mtyp, 0, 0, 0, 0, 0, xmitq);
 }
 
 /* tipc_link_build_nack_msg: prepare link nack message for transmission
@@ -1012,7 +1013,7 @@ static void tipc_link_build_nack_msg(struct tipc_link *l,
 		return;
 
 	if ((skb_queue_len(&l->deferdq) == 1) || !(def_cnt % TIPC_NACK_INTV))
-		tipc_link_build_proto_msg(l, STATE_MSG, 0, 0, 0, 0, xmitq);
+		tipc_link_build_proto_msg(l, STATE_MSG, 0, 0, 0, 0, 0, xmitq);
 }
 
 /* tipc_link_rcv - process TIPC packets/messages arriving from off-node
@@ -1085,7 +1086,8 @@ drop:
 }
 
 static void tipc_link_build_proto_msg(struct tipc_link *l, int mtyp, bool probe,
-				      u16 rcvgap, int tolerance, int priority,
+				      bool probe_reply, u16 rcvgap,
+				      int tolerance, int priority,
 				      struct sk_buff_head *xmitq)
 {
 	struct sk_buff *skb = NULL;
@@ -1124,6 +1126,7 @@ static void tipc_link_build_proto_msg(struct tipc_link *l, int mtyp, bool probe,
 		msg_set_probe(hdr, probe);
 		if (probe)
 			l->stats.sent_probes++;
+		msg_set_is_keepalive(hdr, probe || probe_reply);
 		l->stats.sent_states++;
 		l->rcv_unacked = 0;
 	} else {
@@ -1224,6 +1227,7 @@ static int tipc_link_proto_rcv(struct tipc_link *l, struct sk_buff *skb,
 	u16 peers_prio = msg_linkprio(hdr);
 	u16 rcv_nxt = l->rcv_nxt;
 	int mtyp = msg_type(hdr);
+	bool reply = msg_probe(hdr);
 	char *if_name;
 	int rc = 0;
 
@@ -1296,9 +1300,9 @@ static int tipc_link_proto_rcv(struct tipc_link *l, struct sk_buff *skb,
 		/* Send NACK if peer has sent pkts we haven't received yet */
 		if (more(peers_snd_nxt, rcv_nxt) && !tipc_link_is_synching(l))
 			rcvgap = peers_snd_nxt - l->rcv_nxt;
-		if (rcvgap || (msg_probe(hdr)))
-			tipc_link_build_proto_msg(l, STATE_MSG, 0, rcvgap,
-						  0, 0, xmitq);
+		if (rcvgap || reply)
+			tipc_link_build_proto_msg(l, STATE_MSG, 0, reply,
+						  rcvgap, 0, 0, xmitq);
 		tipc_link_release_pkts(l, ack);
 
 		/* If NACK, retransmit will now start at right position */
@@ -1667,14 +1671,14 @@ int tipc_nl_link_set(struct sk_buff *skb, struct genl_info *info)
 
 			tol = nla_get_u32(props[TIPC_NLA_PROP_TOL]);
 			link->tolerance = tol;
-			tipc_link_build_proto_msg(link, STATE_MSG, 0, 0, tol, 0, &xmitq);
+			tipc_link_build_proto_msg(link, STATE_MSG, 0, 0, tol, 0, 0, &xmitq);
 		}
 		if (props[TIPC_NLA_PROP_PRIO]) {
 			u32 prio;
 
 			prio = nla_get_u32(props[TIPC_NLA_PROP_PRIO]);
 			link->priority = prio;
-			tipc_link_build_proto_msg(link, STATE_MSG, 0, 0, 0, prio, &xmitq);
+			tipc_link_build_proto_msg(link, STATE_MSG, 0, 0, 0, 0, prio, &xmitq);
 		}
 		if (props[TIPC_NLA_PROP_WIN]) {
 			u32 win;
