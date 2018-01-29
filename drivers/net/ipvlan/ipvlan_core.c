@@ -275,13 +275,13 @@ static int ipvlan_rcv_frame(struct ipvl_addr *addr, struct sk_buff **pskb,
 		goto out;
 
 	*pskb = skb;
-	skb->dev = dev;
-	skb->pkt_type = PACKET_HOST;
 
 	if (local) {
+		skb->pkt_type = PACKET_HOST;
 		if (dev_forward_skb(ipvlan->dev, skb) == NET_RX_SUCCESS)
 			success = true;
 	} else {
+		skb->dev = dev;
 		ret = RX_HANDLER_ANOTHER;
 		success = true;
 	}
