@@ -68,11 +68,11 @@ struct flow_dissector_key_ipv6_addrs {
 };
 
 /**
- * struct flow_dissector_key_tipc:
- * @key: source node address combined with selector
+ * struct flow_dissector_key_tipc_addrs:
+ * @srcnode: source node address combined with selector
  */
-struct flow_dissector_key_tipc {
-	__be32 key;
+struct flow_dissector_key_tipc_addrs {
+	__be32 srcnode;
 };
 
 /**
@@ -84,7 +84,7 @@ struct flow_dissector_key_addrs {
 	union {
 		struct flow_dissector_key_ipv4_addrs v4addrs;
 		struct flow_dissector_key_ipv6_addrs v6addrs;
-		struct flow_dissector_key_tipc tipckey;
+		struct flow_dissector_key_tipc_addrs tipcaddrs;
 	};
 };
 
@@ -123,7 +123,7 @@ enum flow_dissector_key_id {
 	FLOW_DISSECTOR_KEY_IPV6_ADDRS, /* struct flow_dissector_key_ipv6_addrs */
 	FLOW_DISSECTOR_KEY_PORTS, /* struct flow_dissector_key_ports */
 	FLOW_DISSECTOR_KEY_ETH_ADDRS, /* struct flow_dissector_key_eth_addrs */
-	FLOW_DISSECTOR_KEY_TIPC, /* struct flow_dissector_key_tipc */
+	FLOW_DISSECTOR_KEY_TIPC_ADDRS, /* struct flow_dissector_key_tipc_addrs */
 	FLOW_DISSECTOR_KEY_VLAN, /* struct flow_dissector_key_flow_vlan */
 	FLOW_DISSECTOR_KEY_FLOW_LABEL, /* struct flow_dissector_key_flow_tags */
 	FLOW_DISSECTOR_KEY_GRE_KEYID, /* struct flow_dissector_key_keyid */
