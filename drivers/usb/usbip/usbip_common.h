@@ -261,6 +261,9 @@ struct usbip_device {
 	/* lock for status */
 	spinlock_t lock;
 
+#ifndef __GENKSYMS__
+	int sockfd;
+#endif
 	struct socket *tcp_socket;
 
 	struct task_struct *tcp_rx;
