@@ -337,6 +337,16 @@ lr	.req	x30		// link register
 	mrs	\rd, sp_el0
 	.endm
 
+	.macro	pte_to_phys, phys, pte
+#ifdef CONFIG_ARM64_PA_BITS_52
+	ubfiz	\phys, \pte, #(48 - 16 - 12), #16
+	bfxil	\phys, \pte, #16, #32
+	lsl	\phys, \phys, #16
+#else
+	and	\phys, \pte, #PTE_ADDR_MASK
+#endif
+	.endm
+
 	/*
 	 * mov_q - move an immediate constant into a 64-bit register using
 	 *         between 2 and 4 movz/movk instructions (depending on the
