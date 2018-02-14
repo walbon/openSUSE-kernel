@@ -3286,6 +3286,7 @@ struct qla_qpair {
 	 */
 	spinlock_t *qp_lock_ptr;
 	struct scsi_qla_host *vha;
+	u32 chip_reset;
 
 	/* distill these fields down to 'online=0/1'
 	 * ha->flags.eeh_busy
@@ -3297,6 +3298,8 @@ struct qla_qpair {
 	uint32_t difdix_supported:1;
 	uint32_t delete_in_progress:1;
 	uint32_t fw_started:1;
+	uint32_t enable_class_2:1;
+	uint32_t enable_explicit_conf:1;
 
 	uint16_t id;			/* qp number used with FW */
 	uint16_t vp_idx;		/* vport ID */
@@ -3330,8 +3333,6 @@ struct scsi_qlt_host {
 
 struct qlt_hw_data {
 	/* Protected by hw lock */
-	uint32_t enable_class_2:1;
-	uint32_t enable_explicit_conf:1;
 	uint32_t node_name_set:1;
 
 	dma_addr_t atio_dma;	/* Physical address. */
@@ -3988,7 +3989,6 @@ struct qla_hw_data {
 	struct work_struct board_disable;
 
 	struct mr_data_fx00 mr;
-	uint32_t chip_reset;
 
 	struct qlt_hw_data tgt;
 	int	allow_cna_fw_dump;
@@ -4282,6 +4282,25 @@ struct qla2_sgx {
 
 #define QLA_QPAIR_MARK_NOT_BUSY(__qpair)		\
 	atomic_dec(&__qpair->ref_count);		\
+
+
+#define QLA_ENA_CONF(_ha) {\
+    int i;\
+    _ha->base_qpair->enable_explicit_conf = 1;	\
+    for (i = 0; i < _ha->max_qpairs; i++) {	\
+	if (_ha->queue_pair_map[i])		\
+	    _ha->queue_pair_map[i]->enable_explicit_conf = 1; \
+    }						\
+}
+
+#define QLA_DIS_CONF(_ha) {\
+    int i;\
+    _ha->base_qpair->enable_explicit_conf = 0;	\
+    for (i = 0; i < _ha->max_qpairs; i++) {	\
+	if (_ha->queue_pair_map[i])		\
+	    _ha->queue_pair_map[i]->enable_explicit_conf = 0; \
+    }						\
+}
 
 /*
  * qla2x00 local function return status codes
