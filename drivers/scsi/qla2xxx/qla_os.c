@@ -151,14 +151,6 @@ MODULE_PARM_DESC(ql2xmqsupport,
 		"Default is 1 for supported. "
 		"Set it to 0 to turn off mq qpair support.");
 
-int ql2xenablemsix = 1;
-module_param(ql2xenablemsix, int, S_IRUGO);
-MODULE_PARM_DESC(ql2xenablemsix,
-		"Set to enable MSI or MSI-X interrupt mechanism."
-		" Default is 1, enable MSI-X interrupt mechanism."
-		" 0 -- enable traditional pin-based mechanism."
-		" 1 -- enable MSI-X interrupt mechanism."
-		" 2 -- enable MSI interrupt mechanism.");
 int ql2xfwloadbin;
 module_param(ql2xfwloadbin, int, S_IRUGO|S_IWUSR);
 module_param_named(fwload, ql2xfwloadbin, int, S_IRUGO|S_IWUSR);

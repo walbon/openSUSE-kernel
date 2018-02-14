@@ -120,7 +120,6 @@ extern int ql2xfdmienable;
 extern int ql2xallocfwdump;
 extern int ql2xextended_error_logging;
 extern int ql2xiidmaenable;
-extern int ql2xenablemsix;
 extern int ql2xmqsupport;
 extern int ql2xfwloadbin;
 extern int ql2xetsenable;
