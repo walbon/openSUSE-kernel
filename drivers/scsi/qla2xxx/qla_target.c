@@ -1962,6 +1962,7 @@ static int __qlt_24xx_handle_abts(struct scsi_qla_host *vha,
 	mcmd->reset_count = ha->base_qpair->chip_reset;
 	mcmd->tmr_func = QLA_TGT_ABTS;
 	mcmd->qpair = ha->base_qpair;
+	mcmd->vha = vha;
 
 	/*
 	 * LUN is looked up by target-core internally based on the passed
@@ -2059,7 +2060,7 @@ static void qlt_24xx_handle_abts(struct scsi_qla_host *vha,
 static void qlt_24xx_send_task_mgmt_ctio(struct qla_qpair *qpair,
 	struct qla_tgt_mgmt_cmd *mcmd, uint32_t resp_code)
 {
-	struct scsi_qla_host *ha = qpair->vha;
+	struct scsi_qla_host *ha = mcmd->vha;
 	struct atio_from_isp *atio = &mcmd->orig_iocb.atio;
 	struct ctio7_to_24xx *ctio;
 	uint16_t temp;
@@ -3520,6 +3521,9 @@ static int __qlt_send_term_exchange(struct qla_qpair *qpair,
 
 	ql_dbg(ql_dbg_tgt, vha, 0xe009, "Sending TERM EXCH CTIO (ha=%p)\n", ha);
 
+	if (cmd)
+		vha = cmd->vha;
+
 	pkt = (request_t *)qla2x00_alloc_iocbs_ready(qpair, NULL);
 	if (pkt == NULL) {
 		ql_dbg(ql_dbg_tgt, vha, 0xe050,
@@ -4357,6 +4361,7 @@ static int qlt_issue_task_mgmt(struct fc_port *sess, u64 lun,
 	mcmd->flags = flags;
 	mcmd->reset_count = ha->base_qpair->chip_reset;
 	mcmd->qpair = ha->base_qpair;
+	mcmd->vha = vha;
 
 	switch (fn) {
 	case QLA_TGT_LUN_RESET:
