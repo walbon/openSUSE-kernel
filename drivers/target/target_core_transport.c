@@ -1614,7 +1614,31 @@ static void target_complete_tmr_failure(struct work_struct *work)
 	se_cmd->se_tmr_req->response = TMR_LUN_DOES_NOT_EXIST;
 	se_cmd->se_tfo->queue_tm_rsp(se_cmd);
 
+	transport_lun_remove_cmd(se_cmd);
 	transport_cmd_check_stop_to_fabric(se_cmd);
+}
+
+static bool target_lookup_lun_from_tag(struct se_session *se_sess, u64 tag,
+				       u64 *unpacked_lun)
+{
+	struct se_cmd *se_cmd;
+	unsigned long flags;
+	bool ret = false;
+
+	spin_lock_irqsave(&se_sess->sess_cmd_lock, flags);
+	list_for_each_entry(se_cmd, &se_sess->sess_cmd_list, se_cmd_list) {
+		if (se_cmd->se_cmd_flags & SCF_SCSI_TMR_CDB)
+			continue;
+
+		if (se_cmd->tag == tag) {
+			*unpacked_lun = se_cmd->orig_fe_lun;
+			ret = true;
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&se_sess->sess_cmd_lock, flags);
+
+	return ret;
 }
 
 /**
@@ -1664,18 +1688,30 @@ int target_submit_tmr(struct se_cmd *se_cmd, struct se_session *se_sess,
 		core_tmr_release_req(se_cmd->se_tmr_req);
 		return ret;
 	}
+	/*
+	 * If this is ABORT_TASK with no explicit fabric provided LUN,
+	 * go ahead and search active session tags for a match to figure
+	 * out unpacked_lun for the original se_cmd.
+	 */
+	if (tm_type == TMR_ABORT_TASK && (flags & TARGET_SCF_LOOKUP_LUN_FROM_TAG)) {
+		if (!target_lookup_lun_from_tag(se_sess, tag, &unpacked_lun))
+			goto failure;
+	}
 
 	ret = transport_lookup_tmr_lun(se_cmd, unpacked_lun);
-	if (ret) {
-		/*
-		 * For callback during failure handling, push this work off
-		 * to process context with TMR_LUN_DOES_NOT_EXIST status.
-		 */
-		INIT_WORK(&se_cmd->work, target_complete_tmr_failure);
-		schedule_work(&se_cmd->work);
-		return 0;
-	}
+	if (ret)
+		goto failure;
+
 	transport_generic_handle_tmr(se_cmd);
+	return 0;
+
+	/*
+	 * For callback during failure handling, push this work off
+	 * to process context with TMR_LUN_DOES_NOT_EXIST status.
+	 */
+failure:
+	INIT_WORK(&se_cmd->work, target_complete_tmr_failure);
+	schedule_work(&se_cmd->work);
 	return 0;
 }
 EXPORT_SYMBOL(target_submit_tmr);
@@ -3249,6 +3285,7 @@ static void target_tmr_work(struct work_struct *work)
 	cmd->se_tfo->queue_tm_rsp(cmd);
 
 check_stop:
+	transport_lun_remove_cmd(cmd);
 	transport_cmd_check_stop_to_fabric(cmd);
 }
 
@@ -3271,6 +3308,7 @@ int transport_generic_handle_tmr(
 		pr_warn_ratelimited("handle_tmr caught CMD_T_ABORTED TMR %d"
 			"ref_tag: %llu tag: %llu\n", cmd->se_tmr_req->function,
 			cmd->se_tmr_req->ref_task_tag, cmd->tag);
+		transport_lun_remove_cmd(cmd);
 		transport_cmd_check_stop_to_fabric(cmd);
 		return 0;
 	}
