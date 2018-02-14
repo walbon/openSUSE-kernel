@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017 Broadcom. All Rights Reserved. The term      *
+ * Copyright (C) 2017-2018 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Limited and/or its subsidiaries.  *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -148,6 +148,7 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 	struct lpfc_hba   *phba = vport->phba;
 	struct lpfc_nvmet_tgtport *tgtp;
 	struct nvme_fc_local_port *localport;
+	struct lpfc_nvme_lport *lport;
 	struct lpfc_nodelist *ndlp;
 	struct nvme_fc_remote_port *nrport;
 	uint64_t data1, data2, data3, tot;
@@ -198,10 +199,15 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 		}
 
 		len += snprintf(buf+len, PAGE_SIZE-len,
-				"LS: Xmt %08x Drop %08x Cmpl %08x Err %08x\n",
+				"LS: Xmt %08x Drop %08x Cmpl %08x\n",
 				atomic_read(&tgtp->xmt_ls_rsp),
 				atomic_read(&tgtp->xmt_ls_drop),
-				atomic_read(&tgtp->xmt_ls_rsp_cmpl),
+				atomic_read(&tgtp->xmt_ls_rsp_cmpl));
+
+		len += snprintf(buf + len, PAGE_SIZE - len,
+				"LS: RSP Abort %08x xb %08x Err %08x\n",
+				atomic_read(&tgtp->xmt_ls_rsp_aborted),
+				atomic_read(&tgtp->xmt_ls_rsp_xb_set),
 				atomic_read(&tgtp->xmt_ls_rsp_error));
 
 		len += snprintf(buf+len, PAGE_SIZE-len,
@@ -236,6 +242,12 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 				atomic_read(&tgtp->xmt_fcp_rsp_drop));
 
 		len += snprintf(buf+len, PAGE_SIZE-len,
+				"FCP Rsp Abort: %08x xb %08x xricqe  %08x\n",
+				atomic_read(&tgtp->xmt_fcp_rsp_aborted),
+				atomic_read(&tgtp->xmt_fcp_rsp_xb_set),
+				atomic_read(&tgtp->xmt_fcp_xri_abort_cqe));
+
+		len += snprintf(buf + len, PAGE_SIZE - len,
 				"ABORT: Xmt %08x Cmpl %08x\n",
 				atomic_read(&tgtp->xmt_fcp_abort),
 				atomic_read(&tgtp->xmt_fcp_abort_cmpl));
@@ -246,6 +258,12 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 				atomic_read(&tgtp->xmt_abort_unsol),
 				atomic_read(&tgtp->xmt_abort_rsp),
 				atomic_read(&tgtp->xmt_abort_rsp_error));
+
+		len += snprintf(buf + len, PAGE_SIZE - len,
+				"DELAY: ctx %08x  fod %08x wqfull %08x\n",
+				atomic_read(&tgtp->defer_ctx),
+				atomic_read(&tgtp->defer_fod),
+				atomic_read(&tgtp->defer_wqfull));
 
 		/* Calculate outstanding IOs */
 		tot = atomic_read(&tgtp->rcv_fcp_cmd_drop);
@@ -271,6 +289,7 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 				wwn_to_u64(vport->fc_portname.u.wwn));
 		return len;
 	}
+	lport = (struct lpfc_nvme_lport *)localport->private;
 	len = snprintf(buf, PAGE_SIZE, "NVME Initiator Enabled\n");
 
 	spin_lock_irq(shost->host_lock);
@@ -347,9 +366,16 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 
 	len += snprintf(buf + len, PAGE_SIZE, "\nNVME Statistics\n");
 	len += snprintf(buf+len, PAGE_SIZE-len,
-			"LS: Xmt %016x Cmpl %016x\n",
+			"LS: Xmt %010x Cmpl %010x Abort %08x\n",
 			atomic_read(&phba->fc4NvmeLsRequests),
-			atomic_read(&phba->fc4NvmeLsCmpls));
+			atomic_read(&phba->fc4NvmeLsCmpls),
+			atomic_read(&lport->xmt_ls_abort));
+
+	len += snprintf(buf + len, PAGE_SIZE - len,
+			"LS XMIT: Err %08x  CMPL: xb %08x Err %08x\n",
+			atomic_read(&lport->xmt_ls_err),
+			atomic_read(&lport->cmpl_ls_xb),
+			atomic_read(&lport->cmpl_ls_err));
 
 	tot = atomic_read(&phba->fc4NvmeIoCmpls);
 	data1 = atomic_read(&phba->fc4NvmeInputRequests);
@@ -360,8 +386,22 @@ lpfc_nvme_info_show(struct device *dev, struct device_attribute *attr,
 			data1, data2, data3);
 
 	len += snprintf(buf+len, PAGE_SIZE-len,
-			"    Cmpl %016llx Outstanding %016llx\n",
-			tot, (data1 + data2 + data3) - tot);
+			"    noxri %08x nondlp %08x qdepth %08x "
+			"wqerr %08x\n",
+			atomic_read(&lport->xmt_fcp_noxri),
+			atomic_read(&lport->xmt_fcp_bad_ndlp),
+			atomic_read(&lport->xmt_fcp_qdepth),
+			atomic_read(&lport->xmt_fcp_wqerr));
+
+	len += snprintf(buf + len, PAGE_SIZE - len,
+			"    Cmpl %016llx Outstanding %016llx Abort %08x\n",
+			tot, ((data1 + data2 + data3) - tot),
+			atomic_read(&lport->xmt_fcp_abort));
+
+	len += snprintf(buf + len, PAGE_SIZE - len,
+			"FCP CMPL: xb %08x Err %08x\n",
+			atomic_read(&lport->cmpl_fcp_xb),
+			atomic_read(&lport->cmpl_fcp_err));
 	return len;
 }
 
@@ -871,7 +911,12 @@ lpfc_issue_lip(struct Scsi_Host *shost)
 	LPFC_MBOXQ_t *pmboxq;
 	int mbxstatus = MBXERR_ERROR;
 
+	/*
+	 * If the link is offline, disabled or BLOCK_MGMT_IO
+	 * it doesn't make any sense to allow issue_lip
+	 */
 	if ((vport->fc_flag & FC_OFFLINE_MODE) ||
+	    (phba->hba_flag & LINK_DISABLED) ||
 	    (phba->sli.sli_flag & LPFC_BLOCK_MGMT_IO))
 		return -EPERM;
 
@@ -3431,8 +3476,8 @@ LPFC_VPORT_ATTR_R(lun_queue_depth, 30, 1, 512,
 # tgt_queue_depth:  This parameter is used to limit the number of outstanding
 # commands per target port. Value range is [10,65535]. Default value is 65535.
 */
-LPFC_VPORT_ATTR_R(tgt_queue_depth, 65535, 10, 65535,
-		  "Max number of FCP commands we can queue to a specific target port");
+LPFC_VPORT_ATTR_RW(tgt_queue_depth, 65535, 10, 65535,
+		   "Max number of FCP commands we can queue to a specific target port");
 
 /*
 # hba_queue_depth:  This parameter is used to limit the number of outstanding

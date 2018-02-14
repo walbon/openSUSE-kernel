@@ -1,8 +1,7 @@
-
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017 Broadcom. All Rights Reserved. The term      *
+ * Copyright (C) 2017-2018 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Limited and/or its subsidiaries.  *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -475,28 +474,30 @@ lpfc_sli4_rq_put(struct lpfc_queue *hq, struct lpfc_queue *dq,
 	struct lpfc_rqe *temp_hrqe;
 	struct lpfc_rqe *temp_drqe;
 	struct lpfc_register doorbell;
-	int put_index;
+	int hq_put_index;
+	int dq_put_index;
 
 	/* sanity check on queue memory */
 	if (unlikely(!hq) || unlikely(!dq))
 		return -ENOMEM;
-	put_index = hq->host_index;
-	temp_hrqe = hq->qe[put_index].rqe;
-	temp_drqe = dq->qe[dq->host_index].rqe;
+	hq_put_index = hq->host_index;
+	dq_put_index = dq->host_index;
+	temp_hrqe = hq->qe[hq_put_index].rqe;
+	temp_drqe = dq->qe[dq_put_index].rqe;
 
 	if (hq->type != LPFC_HRQ || dq->type != LPFC_DRQ)
 		return -EINVAL;
-	if (put_index != dq->host_index)
+	if (hq_put_index != dq_put_index)
 		return -EINVAL;
 	/* If the host has not yet processed the next entry then we are done */
-	if (((put_index + 1) % hq->entry_count) == hq->hba_index)
+	if (((hq_put_index + 1) % hq->entry_count) == hq->hba_index)
 		return -EBUSY;
 	lpfc_sli_pcimem_bcopy(hrqe, temp_hrqe, hq->entry_size);
 	lpfc_sli_pcimem_bcopy(drqe, temp_drqe, dq->entry_size);
 
 	/* Update the host index to point to the next slot */
-	hq->host_index = ((put_index + 1) % hq->entry_count);
-	dq->host_index = ((dq->host_index + 1) % dq->entry_count);
+	hq->host_index = ((hq_put_index + 1) % hq->entry_count);
+	dq->host_index = ((dq_put_index + 1) % dq->entry_count);
 	hq->RQ_buf_posted++;
 
 	/* Ring The Header Receive Queue Doorbell */
@@ -517,7 +518,7 @@ lpfc_sli4_rq_put(struct lpfc_queue *hq, struct lpfc_queue *dq,
 		}
 		writel(doorbell.word0, hq->db_regaddr);
 	}
-	return put_index;
+	return hq_put_index;
 }
 
 /**
@@ -3774,6 +3775,7 @@ lpfc_sli_flush_fcp_rings(struct lpfc_hba *phba)
 	struct lpfc_sli *psli = &phba->sli;
 	struct lpfc_sli_ring  *pring;
 	uint32_t i;
+	struct lpfc_iocbq *piocb, *next_iocb;
 
 	spin_lock_irq(&phba->hbalock);
 	/* Indicate the I/O queues are flushed */
@@ -3788,6 +3790,9 @@ lpfc_sli_flush_fcp_rings(struct lpfc_hba *phba)
 			spin_lock_irq(&pring->ring_lock);
 			/* Retrieve everything on txq */
 			list_splice_init(&pring->txq, &txq);
+			list_for_each_entry_safe(piocb, next_iocb,
+						 &pring->txcmplq, list)
+				piocb->iocb_flag &= ~LPFC_IO_ON_TXCMPLQ;
 			/* Retrieve everything on the txcmplq */
 			list_splice_init(&pring->txcmplq, &txcmplq);
 			pring->txq_cnt = 0;
@@ -3809,6 +3814,9 @@ lpfc_sli_flush_fcp_rings(struct lpfc_hba *phba)
 		spin_lock_irq(&phba->hbalock);
 		/* Retrieve everything on txq */
 		list_splice_init(&pring->txq, &txq);
+		list_for_each_entry_safe(piocb, next_iocb,
+					 &pring->txcmplq, list)
+			piocb->iocb_flag &= ~LPFC_IO_ON_TXCMPLQ;
 		/* Retrieve everything on the txcmplq */
 		list_splice_init(&pring->txcmplq, &txcmplq);
 		pring->txq_cnt = 0;
@@ -3840,6 +3848,7 @@ lpfc_sli_flush_nvme_rings(struct lpfc_hba *phba)
 	LIST_HEAD(txcmplq);
 	struct lpfc_sli_ring  *pring;
 	uint32_t i;
+	struct lpfc_iocbq *piocb, *next_iocb;
 
 	if (phba->sli_rev < LPFC_SLI_REV4)
 		return;
@@ -3856,8 +3865,11 @@ lpfc_sli_flush_nvme_rings(struct lpfc_hba *phba)
 	for (i = 0; i < phba->cfg_nvme_io_channel; i++) {
 		pring = phba->sli4_hba.nvme_wq[i]->pring;
 
-		/* Retrieve everything on the txcmplq */
 		spin_lock_irq(&pring->ring_lock);
+		list_for_each_entry_safe(piocb, next_iocb,
+					 &pring->txcmplq, list)
+			piocb->iocb_flag &= ~LPFC_IO_ON_TXCMPLQ;
+		/* Retrieve everything on the txcmplq */
 		list_splice_init(&pring->txcmplq, &txcmplq);
 		pring->txcmplq_cnt = 0;
 		spin_unlock_irq(&pring->ring_lock);
@@ -6531,9 +6543,11 @@ lpfc_post_rq_buffer(struct lpfc_hba *phba, struct lpfc_queue *hrq,
 	struct lpfc_rqe hrqe;
 	struct lpfc_rqe drqe;
 	struct lpfc_rqb *rqbp;
+	unsigned long flags;
 	struct rqb_dmabuf *rqb_buffer;
 	LIST_HEAD(rqb_buf_list);
 
+	spin_lock_irqsave(&phba->hbalock, flags);
 	rqbp = hrq->rqbp;
 	for (i = 0; i < count; i++) {
 		/* IF RQ is already full, don't bother */
@@ -6557,6 +6571,15 @@ lpfc_post_rq_buffer(struct lpfc_hba *phba, struct lpfc_queue *hrq,
 		drqe.address_hi = putPaddrHigh(rqb_buffer->dbuf.phys);
 		rc = lpfc_sli4_rq_put(hrq, drq, &hrqe, &drqe);
 		if (rc < 0) {
+			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+					"6421 Cannot post to HRQ %d: %x %x %x "
+					"DRQ %x %x\n",
+					hrq->queue_id,
+					hrq->host_index,
+					hrq->hba_index,
+					hrq->entry_count,
+					drq->host_index,
+					drq->hba_index);
 			rqbp->rqb_free_buffer(phba, rqb_buffer);
 		} else {
 			list_add_tail(&rqb_buffer->hbuf.list,
@@ -6564,6 +6587,7 @@ lpfc_post_rq_buffer(struct lpfc_hba *phba, struct lpfc_queue *hrq,
 			rqbp->buffer_count++;
 		}
 	}
+	spin_unlock_irqrestore(&phba->hbalock, flags);
 	return 1;
 }
 
@@ -12887,8 +12911,8 @@ lpfc_sli4_sp_handle_rcqe(struct lpfc_hba *phba, struct lpfc_rcqe *rcqe)
 		lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
 				"2537 Receive Frame Truncated!!\n");
 	case FC_STATUS_RQ_SUCCESS:
-		lpfc_sli4_rq_release(hrq, drq);
 		spin_lock_irqsave(&phba->hbalock, iflags);
+		lpfc_sli4_rq_release(hrq, drq);
 		dma_buf = lpfc_sli_hbqbuf_get(&phba->hbqs[0].hbq_buffer_list);
 		if (!dma_buf) {
 			hrq->RQ_no_buf_found++;
@@ -13228,6 +13252,8 @@ lpfc_sli4_fp_handle_rel_wcqe(struct lpfc_hba *phba, struct lpfc_queue *cq,
 		if (childwq->queue_id == hba_wqid) {
 			lpfc_sli4_wq_release(childwq,
 					bf_get(lpfc_wcqe_r_wqe_index, wcqe));
+			if (childwq->q_flag & HBA_NVMET_WQFULL)
+				lpfc_nvmet_wqfull_process(phba, childwq);
 			wqid_matched = true;
 			break;
 		}
@@ -13290,8 +13316,8 @@ lpfc_sli4_nvmet_handle_rcqe(struct lpfc_hba *phba, struct lpfc_queue *cq,
 				"6126 Receive Frame Truncated!!\n");
 		/* Drop thru */
 	case FC_STATUS_RQ_SUCCESS:
-		lpfc_sli4_rq_release(hrq, drq);
 		spin_lock_irqsave(&phba->hbalock, iflags);
+		lpfc_sli4_rq_release(hrq, drq);
 		dma_buf = lpfc_sli_rqbuf_get(phba, hrq);
 		if (!dma_buf) {
 			hrq->RQ_no_buf_found++;
@@ -13946,6 +13972,7 @@ lpfc_sli4_queue_alloc(struct lpfc_hba *phba, uint32_t page_size,
 
 	INIT_LIST_HEAD(&queue->list);
 	INIT_LIST_HEAD(&queue->wq_list);
+	INIT_LIST_HEAD(&queue->wqfull_list);
 	INIT_LIST_HEAD(&queue->page_list);
 	INIT_LIST_HEAD(&queue->child_list);
 
@@ -14906,7 +14933,8 @@ lpfc_wq_create(struct lpfc_hba *phba, struct lpfc_queue *wq,
 	bf_set(lpfc_mbox_hdr_version, &shdr->request,
 	       phba->sli4_hba.pc_sli4_params.wqv);
 
-	if (phba->sli4_hba.pc_sli4_params.wqsize & LPFC_WQ_SZ128_SUPPORT)
+	if ((phba->sli4_hba.pc_sli4_params.wqsize & LPFC_WQ_SZ128_SUPPORT) ||
+	    (wq->page_size > SLI4_PAGE_SIZE))
 		wq_create_version = LPFC_Q_CREATE_VERSION_1;
 	else
 		wq_create_version = LPFC_Q_CREATE_VERSION_0;
