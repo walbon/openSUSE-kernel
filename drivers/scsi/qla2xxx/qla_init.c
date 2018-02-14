@@ -2991,7 +2991,8 @@ qla24xx_update_fw_options(scsi_qla_host_t *vha)
 	}
 
 	/* Move PUREX, ABTS RX & RIDA to ATIOQ */
-	if (ql2xmvasynctoatio) {
+	if (ql2xmvasynctoatio &&
+	    (IS_QLA83XX(ha) || IS_QLA27XX(ha))) {
 		if (qla_tgt_mode_enabled(vha) ||
 		    qla_dual_mode_enabled(vha))
 			ha->fw_options[2] |= BIT_11;
