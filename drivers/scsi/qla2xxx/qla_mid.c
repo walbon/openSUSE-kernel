@@ -651,6 +651,7 @@ qla25xx_create_req_que(struct qla_hw_data *ha, uint16_t options,
 	int ret = 0;
 	struct req_que *req = NULL;
 	struct scsi_qla_host *base_vha = pci_get_drvdata(ha->pdev);
+	struct scsi_qla_host *vha = pci_get_drvdata(ha->pdev);
 	uint16_t que_id = 0;
 	device_reg_t *reg;
 	uint32_t cnt;
@@ -747,6 +748,7 @@ qla25xx_create_req_que(struct qla_hw_data *ha, uint16_t options,
 			mutex_unlock(&ha->mq_lock);
 			goto que_failed;
 		}
+		vha->flags.qpairs_req_created = 1;
 	}
 
 	return req->id;
@@ -778,6 +780,7 @@ qla25xx_create_rsp_que(struct qla_hw_data *ha, uint16_t options,
 	int ret = 0;
 	struct rsp_que *rsp = NULL;
 	struct scsi_qla_host *base_vha = pci_get_drvdata(ha->pdev);
+	struct scsi_qla_host *vha = pci_get_drvdata(ha->pdev);
 	uint16_t que_id = 0;
 	device_reg_t *reg;
 
@@ -861,6 +864,7 @@ qla25xx_create_rsp_que(struct qla_hw_data *ha, uint16_t options,
 			mutex_unlock(&ha->mq_lock);
 			goto que_failed;
 		}
+		vha->flags.qpairs_rsp_created = 1;
 	}
 	rsp->req = NULL;
 
