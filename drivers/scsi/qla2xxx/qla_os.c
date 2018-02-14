@@ -4437,7 +4437,6 @@ struct scsi_qla_host *qla2x00_create_host(struct scsi_host_template *sht,
 	INIT_LIST_HEAD(&vha->plogi_ack_list);
 	INIT_LIST_HEAD(&vha->qp_list);
 	INIT_LIST_HEAD(&vha->gnl.fcports);
-	INIT_LIST_HEAD(&vha->gpnid_list);
 
 	spin_lock_init(&vha->work_lock);
 	spin_lock_init(&vha->cmd_list_lock);
@@ -4764,7 +4763,7 @@ void qla2x00_relogin(struct scsi_qla_host *vha)
 	 */
 		if (atomic_read(&fcport->state) != FCS_ONLINE &&
 		    fcport->login_retry && !(fcport->flags & FCF_ASYNC_SENT)) {
-
+			fcport->login_retry--;
 			if (fcport->flags & FCF_FABRIC_DEVICE) {
 				ql_dbg(ql_dbg_disc, fcport->vha, 0x2108,
 				    "%s %8phC DS %d LS %d\n", __func__,
@@ -4775,7 +4774,6 @@ void qla2x00_relogin(struct scsi_qla_host *vha)
 				ea.fcport = fcport;
 				qla2x00_fcport_event_handler(vha, &ea);
 			} else {
-				fcport->login_retry--;
 				status = qla2x00_local_device_login(vha,
 								fcport);
 				if (status == QLA_SUCCESS) {
@@ -5742,21 +5740,16 @@ qla2x00_do_dpc(void *data)
 		}
 
 		/* Retry each device up to login retry count */
-		if (test_bit(RELOGIN_NEEDED, &base_vha->dpc_flags) &&
+		if ((test_and_clear_bit(RELOGIN_NEEDED,
+						&base_vha->dpc_flags)) &&
 		    !test_bit(LOOP_RESYNC_NEEDED, &base_vha->dpc_flags) &&
 		    atomic_read(&base_vha->loop_state) != LOOP_DOWN) {
 
-			if (!base_vha->relogin_jif ||
-			    time_after_eq(jiffies, base_vha->relogin_jif)) {
-				base_vha->relogin_jif = jiffies + HZ;
-				clear_bit(RELOGIN_NEEDED, &base_vha->dpc_flags);
-
-				ql_dbg(ql_dbg_dpc, base_vha, 0x400d,
-				    "Relogin scheduled.\n");
-				qla2x00_relogin(base_vha);
-				ql_dbg(ql_dbg_dpc, base_vha, 0x400e,
-				    "Relogin end.\n");
-			}
+			ql_dbg(ql_dbg_dpc, base_vha, 0x400d,
+			    "Relogin scheduled.\n");
+			qla2x00_relogin(base_vha);
+			ql_dbg(ql_dbg_dpc, base_vha, 0x400e,
+			    "Relogin end.\n");
 		}
 loop_resync_check:
 		if (test_and_clear_bit(LOOP_RESYNC_NEEDED,
