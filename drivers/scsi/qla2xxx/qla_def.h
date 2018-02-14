@@ -3217,6 +3217,18 @@ struct qla_tc_param {
 #define QLA_MAX_VPORTS_QLA24XX	128
 #define QLA_MAX_VPORTS_QLA25XX	256
 
+struct qla_tgt_counters {
+	uint64_t qla_core_sbt_cmd;
+	uint64_t core_qla_que_buf;
+	uint64_t qla_core_ret_ctio;
+	uint64_t core_qla_snd_status;
+	uint64_t qla_core_ret_sta_ctio;
+	uint64_t core_qla_free_cmd;
+	uint64_t num_q_full_sent;
+	uint64_t num_alloc_iocb_failed;
+	uint64_t num_term_xchg_sent;
+};
+
 struct qla_qpair;
 
 /* Response queue data structure */
@@ -3319,6 +3331,7 @@ struct qla_qpair {
 	struct list_head qp_list_elem; /* vha->qp_list */
 	struct list_head hints_list;
 	uint16_t cpuid;
+	struct qla_tgt_counters tgt_counters;
 };
 
 /* Place holder for FW buffer parameters */
@@ -3998,18 +4011,6 @@ struct qla_hw_data {
 	int	allow_cna_fw_dump;
 };
 
-struct qla_tgt_counters {
-	uint64_t qla_core_sbt_cmd;
-	uint64_t core_qla_que_buf;
-	uint64_t qla_core_ret_ctio;
-	uint64_t core_qla_snd_status;
-	uint64_t qla_core_ret_sta_ctio;
-	uint64_t core_qla_free_cmd;
-	uint64_t num_q_full_sent;
-	uint64_t num_alloc_iocb_failed;
-	uint64_t num_term_xchg_sent;
-};
-
 /*
  * Qlogic scsi host structure
  */
@@ -4175,10 +4176,8 @@ typedef struct scsi_qla_host {
 	struct fc_host_statistics fc_host_stat;
 	struct qla_statistics qla_stats;
 	struct bidi_statistics bidi_stats;
-
 	atomic_t	vref_count;
 	struct qla8044_reset_template reset_tmplt;
-	struct qla_tgt_counters tgt_counters;
 	uint16_t	bbcr;
 	struct name_list_extended gnl;
 	/* Count of active session/fcport */
