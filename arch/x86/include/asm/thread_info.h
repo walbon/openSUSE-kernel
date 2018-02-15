@@ -171,7 +171,7 @@ static inline struct thread_info *current_thread_info(void)
 #else /* !__ASSEMBLY__ */
 
 #ifdef CONFIG_X86_64
-# define cpu_current_top_of_stack (cpu_tss + TSS_sp0)
+# define cpu_current_top_of_stack (cpu_tss + TSS_sp1)
 #endif
 
 /* Load thread_info address into "reg" */
