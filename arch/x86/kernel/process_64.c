@@ -407,9 +407,6 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	this_cpu_write(cpu_current_top_of_stack,
 		(unsigned long)task_stack_page(next_p) + THREAD_SIZE);
 
-	/* Reload esp0 and ss1.  This changes current_thread_info(). */
-	load_sp0(tss, next);
-
 	/*
 	 * Now maybe reload the debug registers and handle I/O bitmaps
 	 */

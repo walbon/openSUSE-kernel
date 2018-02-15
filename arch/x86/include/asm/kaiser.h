@@ -79,6 +79,15 @@ movq PER_CPU_VAR(unsafe_stack_register_backup), %rax
 8:
 .endm
 
+.macro SWITCH_USER_CR3_NO_STACK
+ALTERNATIVE "jmp 8f", \
+	__stringify(movq %rax, PER_CPU_VAR(unsafe_stack_register_backup)), \
+	X86_FEATURE_KAISER
+_SWITCH_TO_USER_CR3 %rax %al
+movq PER_CPU_VAR(unsafe_stack_register_backup), %rax
+8:
+.endm
+
 #else /* CONFIG_PAGE_TABLE_ISOLATION */
 
 .macro SWITCH_KERNEL_CR3
