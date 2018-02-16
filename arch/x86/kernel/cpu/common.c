@@ -1565,9 +1565,16 @@ void cpu_init(void)
 	/*
 	 * Initialize the TSS.  sp0 points to the entry trampoline stack
 	 * regardless of what task is running.
+	 *
+	 * load_sp0() is required for paravirt establishment of the vCPU sp0.
 	 */
-	t->x86_tss.sp0 = (unsigned long)t + offsetofend(struct tss_struct,
+	v = current->thread.sp0;
+	current->thread.sp0 = (unsigned long)t + offsetofend(struct tss_struct,
 		SYSENTER_stack);
+        load_sp0(t, &current->thread);
+	WRITE_ONCE(t->x86_tss.sp0, current->thread.sp0);
+	/* Restore original value */
+	current->thread.sp0 = v;
 
 	set_tss_desc(cpu, t);
 	load_TR_desc();
