@@ -163,6 +163,28 @@ int diag14(unsigned long rx, unsigned long ry1, unsigned long subcode)
 }
 EXPORT_SYMBOL(diag14);
 
+static inline int __diag204(unsigned long subcode, unsigned long size, void *addr)
+{
+	register unsigned long _subcode asm("0") = subcode;
+	register unsigned long _size asm("1") = size;
+
+	asm volatile(
+		"	diag	%2,%0,0x204\n"
+		"0:\n"
+		EX_TABLE(0b,0b)
+		: "+d" (_subcode), "+d" (_size) : "d" (addr) : "memory");
+	if (_subcode)
+		return -1;
+	return _size;
+}
+
+int diag204(unsigned long subcode, unsigned long size, void *addr)
+{
+	diag_stat_inc(DIAG_STAT_X204);
+	return __diag204(subcode, size, addr);
+}
+EXPORT_SYMBOL(diag204);
+
 /*
  * Diagnose 210: Get information about a virtual device
  */
@@ -198,6 +220,20 @@ int diag210(struct diag210 *addr)
 }
 EXPORT_SYMBOL(diag210);
 
+int diag224(void *ptr)
+{
+	int rc = -EOPNOTSUPP;
+
+	diag_stat_inc(DIAG_STAT_X224);
+	asm volatile(
+		"	diag	%1,%2,0x224\n"
+		"0:	lhi	%0,0x0\n"
+		"1:\n"
+		EX_TABLE(0b,1b)
+		: "+d" (rc) :"d" (0), "d" (ptr) : "memory");
+	return rc;
+}
+EXPORT_SYMBOL(diag224);
 /*
  * Diagnose 26C: Access Certain System Information
  */

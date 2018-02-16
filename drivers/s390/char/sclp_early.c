@@ -45,7 +45,9 @@ struct read_info_sccb {
 	u64	rnmax2;			/* 104-111 */
 	u8	_pad_112[120 - 112];	/* 112-119 */
 	u16	hcpua;			/* 120-121 */
-	u8	_pad_122[4096 - 122];	/* 122-4095 */
+	u8	_pad_122[124 - 122];	/* 122-123 */
+	u32	hmfai;			/* 124-127 */
+	u8	_pad_128[4096 - 128];	/* 128-4095 */
 } __packed __aligned(PAGE_SIZE);
 
 static char sccb_early[PAGE_SIZE] __aligned(PAGE_SIZE) __initdata;
@@ -144,6 +146,8 @@ static void __init sclp_facilities_detect(struct read_info_sccb *sccb)
 	sclp.mtid = (sccb->fac42 & 0x80) ? (sccb->fac42 & 31) : 0;
 	sclp.mtid_cp = (sccb->fac42 & 0x80) ? (sccb->fac43 & 31) : 0;
 	sclp.mtid_prev = (sccb->fac42 & 0x80) ? (sccb->fac66 & 31) : 0;
+
+	sclp.hmfai = sccb->hmfai;
 }
 
 /*

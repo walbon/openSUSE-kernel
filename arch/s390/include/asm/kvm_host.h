@@ -114,6 +114,7 @@ struct kvm_s390_sie_block {
 #define LCTL_CR14	0x0002
 	__u16   lctl;			/* 0x0044 */
 	__s16	icpua;			/* 0x0046 */
+#define ICTL_OPEREXC	0x80000000
 #define ICTL_PINT	0x20000000
 #define ICTL_LPSW	0x00400000
 #define ICTL_STCTL	0x00040000
@@ -224,6 +225,7 @@ struct kvm_vcpu_stat {
 	u32 instruction_stctg;
 	u32 exit_program_interruption;
 	u32 exit_instr_and_program;
+	u32 exit_operation_exception;
 	u32 deliver_external_call;
 	u32 deliver_emergency_signal;
 	u32 deliver_service_signal;
@@ -247,6 +249,7 @@ struct kvm_vcpu_stat {
 	u32 instruction_stfl;
 	u32 instruction_tprot;
 	u32 instruction_essa;
+	u32 instruction_sthyi;
 	u32 instruction_sigp_sense;
 	u32 instruction_sigp_sense_running;
 	u32 instruction_sigp_external_call;
@@ -604,6 +607,7 @@ struct kvm_arch{
 	wait_queue_head_t ipte_wq;
 	int ipte_lock_count;
 	struct mutex ipte_mutex;
+	struct ratelimit_state sthyi_limit;
 	spinlock_t start_stop_lock;
 	struct kvm_s390_cpu_model model;
 	struct kvm_s390_crypto crypto;

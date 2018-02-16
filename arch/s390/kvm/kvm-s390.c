@@ -62,6 +62,7 @@ struct kvm_stats_debugfs_item debugfs_entries[] = {
 	{ "exit_instruction", VCPU_STAT(exit_instruction) },
 	{ "exit_program_interruption", VCPU_STAT(exit_program_interruption) },
 	{ "exit_instr_and_program_int", VCPU_STAT(exit_instr_and_program) },
+	{ "exit_operation_exception", VCPU_STAT(exit_operation_exception) },
 	{ "halt_successful_poll", VCPU_STAT(halt_successful_poll) },
 	{ "halt_attempted_poll", VCPU_STAT(halt_attempted_poll) },
 	{ "halt_wakeup", VCPU_STAT(halt_wakeup) },
@@ -91,6 +92,7 @@ struct kvm_stats_debugfs_item debugfs_entries[] = {
 	{ "instruction_stsi", VCPU_STAT(instruction_stsi) },
 	{ "instruction_stfl", VCPU_STAT(instruction_stfl) },
 	{ "instruction_tprot", VCPU_STAT(instruction_tprot) },
+	{ "instruction_sthyi", VCPU_STAT(instruction_sthyi) },
 	{ "instruction_sigp_sense", VCPU_STAT(instruction_sigp_sense) },
 	{ "instruction_sigp_sense_running", VCPU_STAT(instruction_sigp_sense_running) },
 	{ "instruction_sigp_external_call", VCPU_STAT(instruction_sigp_external_call) },
@@ -120,6 +122,7 @@ struct kvm_stats_debugfs_item debugfs_entries[] = {
 unsigned long kvm_s390_fac_list_mask[] = {
 	0xffe6ffffffffffffUL,
 	0x005effffffffffffUL,
+	0x3000200000000000UL,
 };
 
 unsigned long kvm_s390_fac_list_mask_size(void)
@@ -354,6 +357,14 @@ static int kvm_vm_ioctl_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap)
 		} else if (MACHINE_HAS_VX) {
 			set_kvm_facility(kvm->arch.model.fac->mask, 129);
 			set_kvm_facility(kvm->arch.model.fac->list, 129);
+			if (test_facility(134)) {
+				set_kvm_facility(kvm->arch.model.fac->mask, 134);
+				set_kvm_facility(kvm->arch.model.fac->list, 134);
+			}
+			if (test_facility(135)) {
+				set_kvm_facility(kvm->arch.model.fac->mask, 135);
+				set_kvm_facility(kvm->arch.model.fac->list, 135);
+			}
 			r = 0;
 		} else
 			r = -EINVAL;
@@ -1104,6 +1115,8 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 
 	rc = -ENOMEM;
 
+	ratelimit_state_init(&kvm->arch.sthyi_limit, 5 * HZ, 500);
+
 	kvm->arch.sca = (struct sca_block *) get_zeroed_page(GFP_KERNEL);
 	if (!kvm->arch.sca)
 		goto out_err;
@@ -1148,6 +1161,9 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 
 	kvm_s390_get_cpu_id(&kvm->arch.model.cpu_id);
 	kvm->arch.model.ibc = sclp.ibc & 0x0fff;
+
+	set_kvm_facility(kvm->arch.model.fac->mask, 74);
+	set_kvm_facility(kvm->arch.model.fac->list, 74);
 
 	if (kvm_s390_crypto_init(kvm) < 0)
 		goto out_err;
@@ -1423,6 +1439,8 @@ int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu)
 		vcpu->arch.sie_block->ecb |= 0x10;
 
 	vcpu->arch.sie_block->ecb2  = 8;
+	if (test_kvm_facility(vcpu->kvm, 130))
+		vcpu->arch.sie_block->ecb2 |= 0x20;
 	vcpu->arch.sie_block->eca   = 0xC1002000U;
 	if (sclp.has_siif)
 		vcpu->arch.sie_block->eca |= 1;
@@ -1433,6 +1451,8 @@ int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu)
 		vcpu->arch.sie_block->ecd |= 0x20000000;
 	}
 	vcpu->arch.sie_block->ictl |= ICTL_ISKE | ICTL_SSKE | ICTL_RRBE;
+	if (test_kvm_facility(vcpu->kvm, 74))
+		vcpu->arch.sie_block->ictl |= ICTL_OPEREXC;
 
 	if (vcpu->kvm->arch.use_cmma) {
 		rc = kvm_s390_vcpu_setup_cmma(vcpu);
@@ -2752,12 +2772,25 @@ void kvm_arch_commit_memory_region(struct kvm *kvm,
 	return;
 }
 
+static inline unsigned long nonhyp_mask(int i)
+{
+	unsigned int nonhyp_fai = (sclp.hmfai << i * 2) >> 30;
+
+	return 0x0000ffffffffffffUL >> (nonhyp_fai << 4);
+}
+
 static int __init kvm_s390_init(void)
 {
+	int i;
+
 	if (!sclp.has_sief2) {
 		pr_info("SIE not available\n");
 		return -ENODEV;
 	}
+
+	for (i = 0; i < 16; i++)
+		kvm_s390_fac_list_mask[i] |=
+			S390_lowcore.stfle_fac_list[i] & nonhyp_mask(i);
 
 	return kvm_init(NULL, sizeof(struct kvm_vcpu), 0, THIS_MODULE);
 }
