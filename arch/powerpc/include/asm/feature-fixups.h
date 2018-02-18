@@ -194,7 +194,6 @@ label##3:					       	\
 
 
 #ifndef __ASSEMBLY__
-#include <linux/types.h>
 
 extern long __start___rfi_flush_fixup, __stop___rfi_flush_fixup;
 

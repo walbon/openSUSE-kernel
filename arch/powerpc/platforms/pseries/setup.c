@@ -596,7 +596,7 @@ static void __init pSeries_setup_arch(void)
 
 	pseries_setup_rfi_flush();
 
-	/* By default, only probe PCI (can be overriden by rtas_pci) */
+	/* By default, only probe PCI (can be overridden by rtas_pci) */
 	pci_add_flags(PCI_PROBE_ONLY);
 
 	/* Find and initialize PCI host bridges */
