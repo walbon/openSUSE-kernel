@@ -36,7 +36,6 @@
  */
 #include <asm/bug.h>
 
-/* PACA save area offsets (exgen, exmc, etc) */
 #define EX_R9		0
 #define EX_R10		8
 #define EX_R11		16
@@ -120,8 +119,6 @@
 	RFI_FLUSH_SLOT;							\
 	hrfid;								\
 	b	hrfi_flush_fallback
-
-#define EX_SIZE		13	/* size in u64 units */
 
 #ifdef CONFIG_RELOCATABLE
 #define __EXCEPTION_RELON_PROLOG_PSERIES_1(label, h)			\
@@ -264,7 +261,7 @@ END_FTR_SECTION_NESTED(ftr,ftr,943)
 	mtspr	SPRN_##h##SRR0,r12;					\
 	mfspr	r12,SPRN_##h##SRR1;	/* and SRR1 */			\
 	mtspr	SPRN_##h##SRR1,r10;					\
-	h##RFI_TO_KERNEL;						\
+	h##rfid; /* h##RFI_TO_KERNEL runs out of space */		\
 	b	.	/* prevent speculative execution */
 #define EXCEPTION_PROLOG_PSERIES_1(label, h)				\
 	__EXCEPTION_PROLOG_PSERIES_1(label, h)

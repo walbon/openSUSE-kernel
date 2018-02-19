@@ -924,6 +924,15 @@ static bool init_fallback_flush(void)
 
 	for_each_possible_cpu(cpu) {
 		struct paca_aux_struct *paca_aux = paca[cpu].aux_ptr;
+		/*
+		 * The fallback flush is currently coded for 8-way
+		 * associativity. Different associativity is possible, but it
+		 * will be treated as 8-way and may not evict the lines as
+		 * effectively.
+		 *
+		 * 128 byte lines are mandatory.
+		 */
+		u64 c = l1d_size / 8;
 
 		paca_aux->rfi_flush_fallback_area = l1d_flush_fallback_area;
 		paca_aux->l1d_flush_size = l1d_size;
@@ -965,12 +974,18 @@ void setup_rfi_flush(enum l1d_flush_type types, bool enable)
 #ifdef CONFIG_DEBUG_FS
 static int rfi_flush_set(void *data, u64 val)
 {
+	bool enable;
+
 	if (val == 1)
-		rfi_flush_enable(true);
+		enable = true;
 	else if (val == 0)
-		rfi_flush_enable(false);
+		enable = false;
 	else
 		return -EINVAL;
+
+	/* Only do anything if we're changing state */
+	if (enable != rfi_flush)
+		rfi_flush_enable(enable);
 
 	return 0;
 }
