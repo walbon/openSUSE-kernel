@@ -220,7 +220,6 @@ ENTRY(entry_SYSCALL_compat)
 sysret32_from_system_call:
 	TRACE_IRQS_ON			/* User mode traces as IRQs on. */
 	DISABLE_IBRS
-	SWITCH_USER_CR3
 	movq	RBX(%rsp), %rbx		/* pt_regs->rbx */
 	movq	RBP(%rsp), %rbp		/* pt_regs->rbp */
 	movq	EFLAGS(%rsp), %r11	/* pt_regs->flags (in r11) */
@@ -251,6 +250,7 @@ sysret32_from_system_call:
 	xorq	%r9, %r9
 	xorq	%r10, %r10
 	movq	RSP-ORIG_RAX(%rsp), %rsp
+	SWITCH_USER_CR3_NO_STACK
         USERGS_SYSRET32
 END(entry_SYSCALL_compat)
 
@@ -293,6 +293,17 @@ ENTRY(entry_INT80_compat)
 	 */
 	movl	%eax, %eax
 
+	/* Coming from user mode. Switch to the thread stack. */
+	pushq	%rax
+	movq	%rsp, %rax
+	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
+	pushq	SS-ORIG_RAX(%rax)		/* regs->ss */
+	pushq	RSP-ORIG_RAX(%rax)		/* regs->rsp */
+	pushq	EFLAGS-ORIG_RAX(%rax)		/* regs->eflags */
+	pushq	CS-ORIG_RAX(%rax)		/* regs->cs */
+	pushq	RIP-ORIG_RAX(%rax)		/* regs->ip */
+	movq	(%rax), %rax
+
 	/* Construct struct pt_regs on stack (iret frame is already on stack) */
 	pushq	%rax			/* pt_regs->orig_ax */
 	pushq	%rdi			/* pt_regs->di */
@@ -329,9 +340,7 @@ ENTRY(entry_INT80_compat)
 	/* Go back to user mode. */
 	TRACE_IRQS_ON
 	DISABLE_IBRS
-	SWITCH_USER_CR3
-	SWAPGS
-	jmp	restore_regs_and_iret
+	jmp	tramp_restore_regs_and_iret
 END(entry_INT80_compat)
 
 	ALIGN
