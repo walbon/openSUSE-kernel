@@ -300,6 +300,7 @@ static struct nfs_client *nfs_match_client(const struct nfs_client_initdata *dat
 	if (test_bit(NFS_CS_NO_SHARE, &data->init_flags))
 		return NULL;
 
+again:
 	list_for_each_entry(clp, &nn->nfs_client_list, cl_share_link) {
 	        const struct sockaddr *clap = (struct sockaddr *)&clp->cl_addr;
 		if (test_bit(NFS_CS_NO_SHARE,&clp->cl_flags))
@@ -309,6 +310,16 @@ static struct nfs_client *nfs_match_client(const struct nfs_client_initdata *dat
 		/* Don't match clients that failed to initialise properly */
 		if (clp->cl_cons_state < 0)
 			continue;
+
+		/* If a client is still initializing then we need to wait */
+		if (clp->cl_cons_state > NFS_CS_READY) {
+			atomic_inc(&clp->cl_count);
+			spin_unlock(&nn->nfs_client_lock);
+			nfs_wait_client_init_complete(clp);
+			nfs_put_client(clp);
+			spin_lock(&nn->nfs_client_lock);
+			goto again;
+		}
 
 		/* Different NFS versions cannot share the same nfs_client */
 		if (clp->rpc_ops != data->nfs_mod->rpc_ops)
