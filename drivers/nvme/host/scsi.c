@@ -518,7 +518,6 @@ static int nvme_trans_standard_inquiry_page(struct nvme_ns *ns,
 	struct nvme_ctrl *ctrl = ns->ctrl;
 	struct nvme_id_ns *id_ns;
 	int res;
-	int nvme_sc;
 	int xfer_len;
 	u8 resp_data_format = 0x02;
 	u8 protect;
@@ -526,8 +525,10 @@ static int nvme_trans_standard_inquiry_page(struct nvme_ns *ns,
 	u8 fw_offset = sizeof(ctrl->firmware_rev);
 
 	/* nvme ns identify - use DPS value for PROTECT field */
-	nvme_sc = nvme_identify_ns(ctrl, ns->ns_id, &id_ns);
-	res = nvme_trans_status_code(hdr, nvme_sc);
+	id_ns = nvme_identify_ns(ctrl, ns->ns_id);
+	if (!id_ns)
+		return -ENODEV;
+	res = nvme_trans_status_code(hdr, 0);
 	if (res)
 		return res;
 
@@ -594,12 +595,14 @@ static int nvme_fill_device_id_eui64(struct nvme_ns *ns, struct sg_io_hdr *hdr,
 		u8 *inq_response, int alloc_len)
 {
 	struct nvme_id_ns *id_ns;
-	int nvme_sc, res;
+	int res;
 	size_t len;
 	void *eui;
 
-	nvme_sc = nvme_identify_ns(ns->ctrl, ns->ns_id, &id_ns);
-	res = nvme_trans_status_code(hdr, nvme_sc);
+	id_ns = nvme_identify_ns(ns->ctrl, ns->ns_id);
+	if (!id_ns)
+		return -ENODEV;
+	res = nvme_trans_status_code(hdr, 0);
 	if (res)
 		return res;
 
@@ -710,8 +713,10 @@ static int nvme_trans_ext_inq_page(struct nvme_ns *ns, struct sg_io_hdr *hdr,
 	if (inq_response == NULL)
 		return -ENOMEM;
 
-	nvme_sc = nvme_identify_ns(ctrl, ns->ns_id, &id_ns);
-	res = nvme_trans_status_code(hdr, nvme_sc);
+	id_ns = nvme_identify_ns(ctrl, ns->ns_id);
+	if (!id_ns)
+		return -ENODEV;
+	res = nvme_trans_status_code(hdr, 0);
 	if (res)
 		goto out_free_inq;
 
@@ -967,7 +972,6 @@ static int nvme_trans_fill_blk_desc(struct nvme_ns *ns, struct sg_io_hdr *hdr,
 				    u8 *resp, int len, u8 llbaa)
 {
 	int res;
-	int nvme_sc;
 	struct nvme_id_ns *id_ns;
 	u8 flbas;
 	u32 lba_length;
@@ -977,8 +981,10 @@ static int nvme_trans_fill_blk_desc(struct nvme_ns *ns, struct sg_io_hdr *hdr,
 	else if (llbaa > 0 && len < MODE_PAGE_LLBAA_BLK_DES_LEN)
 		return -EINVAL;
 
-	nvme_sc = nvme_identify_ns(ns->ctrl, ns->ns_id, &id_ns);
-	res = nvme_trans_status_code(hdr, nvme_sc);
+	id_ns = nvme_identify_ns(ns->ctrl, ns->ns_id);
+	if (!id_ns)
+		return -ENODEV;
+	res = nvme_trans_status_code(hdr, 0);
 	if (res)
 		return res;
 
@@ -1425,7 +1431,6 @@ static int nvme_trans_fmt_set_blk_size_count(struct nvme_ns *ns,
 					     struct sg_io_hdr *hdr)
 {
 	int res = 0;
-	int nvme_sc;
 	u8 flbas;
 
 	/*
@@ -1438,8 +1443,10 @@ static int nvme_trans_fmt_set_blk_size_count(struct nvme_ns *ns,
 	if (ns->mode_select_num_blocks == 0 || ns->mode_select_block_len == 0) {
 		struct nvme_id_ns *id_ns;
 
-		nvme_sc = nvme_identify_ns(ns->ctrl, ns->ns_id, &id_ns);
-		res = nvme_trans_status_code(hdr, nvme_sc);
+		id_ns = nvme_identify_ns(ns->ctrl, ns->ns_id);
+		if (!id_ns)
+			return -ENODEV;
+		res = nvme_trans_status_code(hdr, 0);
 		if (res)
 			return res;
 
@@ -1520,8 +1527,7 @@ static int nvme_trans_fmt_get_parm_header(struct sg_io_hdr *hdr, u8 len,
 static int nvme_trans_fmt_send_cmd(struct nvme_ns *ns, struct sg_io_hdr *hdr,
 				   u8 prot_info)
 {
-	int res;
-	int nvme_sc;
+	int res, nvme_sc;
 	struct nvme_id_ns *id_ns;
 	u8 i;
 	u8 nlbaf;
@@ -1530,8 +1536,10 @@ static int nvme_trans_fmt_send_cmd(struct nvme_ns *ns, struct sg_io_hdr *hdr,
 	struct nvme_command c;
 
 	/* Loop thru LBAF's in id_ns to match reqd lbaf, put in cdw10 */
-	nvme_sc = nvme_identify_ns(ns->ctrl, ns->ns_id, &id_ns);
-	res = nvme_trans_status_code(hdr, nvme_sc);
+	id_ns = nvme_identify_ns(ns->ctrl, ns->ns_id);
+	if (!id_ns)
+		return -ENODEV;
+	res = nvme_trans_status_code(hdr, 0);
 	if (res)
 		return res;
 
@@ -1986,7 +1994,6 @@ static int nvme_trans_read_capacity(struct nvme_ns *ns, struct sg_io_hdr *hdr,
 							u8 *cmd, u8 cdb16)
 {
 	int res;
-	int nvme_sc;
 	u32 alloc_len;
 	u32 resp_size;
 	u32 xfer_len;
@@ -2001,8 +2008,10 @@ static int nvme_trans_read_capacity(struct nvme_ns *ns, struct sg_io_hdr *hdr,
 		resp_size = READ_CAP_10_RESP_SIZE;
 	}
 
-	nvme_sc = nvme_identify_ns(ns->ctrl, ns->ns_id, &id_ns);
-	res = nvme_trans_status_code(hdr, nvme_sc);
+	id_ns = nvme_identify_ns(ns->ctrl, ns->ns_id);
+	if (!id_ns)
+		return -ENODEV;
+	res = nvme_trans_status_code(hdr, 0);
 	if (res)
 		return res;	
 

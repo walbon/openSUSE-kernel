@@ -604,7 +604,8 @@ int nvme_identify_ctrl(struct nvme_ctrl *dev, struct nvme_id_ctrl **id)
 	return error;
 }
 
-static int nvme_identify_ns_descs(struct nvme_ns *ns, unsigned nsid)
+static int nvme_identify_ns_descs(struct nvme_ctrl *ctrl, unsigned nsid,
+		u8 *eui64, u8 *nguid, u8 *uuid)
 {
 	struct nvme_command c = { };
 	int status;
@@ -620,7 +621,7 @@ static int nvme_identify_ns_descs(struct nvme_ns *ns, unsigned nsid)
 	if (!data)
 		return -ENOMEM;
 
-	status = nvme_submit_sync_cmd(ns->ctrl->admin_q, &c, data,
+	status = nvme_submit_sync_cmd(ctrl->admin_q, &c, data,
 				      NVME_IDENTIFY_DATA_SIZE);
 	if (status)
 		goto free_data;
@@ -634,33 +635,33 @@ static int nvme_identify_ns_descs(struct nvme_ns *ns, unsigned nsid)
 		switch (cur->nidt) {
 		case NVME_NIDT_EUI64:
 			if (cur->nidl != NVME_NIDT_EUI64_LEN) {
-				dev_warn(ns->ctrl->device,
+				dev_warn(ctrl->device,
 					 "ctrl returned bogus length: %d for NVME_NIDT_EUI64\n",
 					 cur->nidl);
 				goto free_data;
 			}
 			len = NVME_NIDT_EUI64_LEN;
-			memcpy(ns->eui, data + pos + sizeof(*cur), len);
+			memcpy(eui64, data + pos + sizeof(*cur), len);
 			break;
 		case NVME_NIDT_NGUID:
 			if (cur->nidl != NVME_NIDT_NGUID_LEN) {
-				dev_warn(ns->ctrl->device,
+				dev_warn(ctrl->device,
 					 "ctrl returned bogus length: %d for NVME_NIDT_NGUID\n",
 					 cur->nidl);
 				goto free_data;
 			}
 			len = NVME_NIDT_NGUID_LEN;
-			memcpy(ns->nguid, data + pos + sizeof(*cur), len);
+			memcpy(nguid, data + pos + sizeof(*cur), len);
 			break;
 		case NVME_NIDT_UUID:
 			if (cur->nidl != NVME_NIDT_UUID_LEN) {
-				dev_warn(ns->ctrl->device,
+				dev_warn(ctrl->device,
 					 "ctrl returned bogus length: %d for NVME_NIDT_UUID\n",
 					 cur->nidl);
 				goto free_data;
 			}
 			len = NVME_NIDT_UUID_LEN;
-			memcpy(&ns->uuid, data + pos + sizeof(*cur), len);
+			memcpy(&uuid, data + pos + sizeof(*cur), len);
 			break;
 		default:
 			/* Skip unnkown types */
@@ -685,9 +686,10 @@ static int nvme_identify_ns_list(struct nvme_ctrl *dev, unsigned nsid, __le32 *n
 	return nvme_submit_sync_cmd(dev->admin_q, &c, ns_list, 0x1000);
 }
 
-int nvme_identify_ns(struct nvme_ctrl *dev, unsigned nsid,
-		struct nvme_id_ns **id)
+struct nvme_id_ns *nvme_identify_ns(struct nvme_ctrl *ctrl,
+		unsigned nsid)
 {
+	struct nvme_id_ns *id;
 	struct nvme_command c = { };
 	int error;
 
@@ -696,15 +698,18 @@ int nvme_identify_ns(struct nvme_ctrl *dev, unsigned nsid,
 	c.identify.nsid = cpu_to_le32(nsid);
 	c.identify.cns = NVME_ID_CNS_NS;
 
-	*id = kmalloc(sizeof(struct nvme_id_ns), GFP_KERNEL);
-	if (!*id)
-		return -ENOMEM;
+	id = kmalloc(sizeof(*id), GFP_KERNEL);
+	if (!id)
+		return NULL;
 
-	error = nvme_submit_sync_cmd(dev->admin_q, &c, *id,
-			sizeof(struct nvme_id_ns));
-	if (error)
-		kfree(*id);
-	return error;
+	error = nvme_submit_sync_cmd(ctrl->admin_q, &c, id, sizeof(*id));
+	if (error) {
+		dev_warn(ctrl->device, "Identify namespace failed\n");
+		kfree(id);
+		return NULL;
+	}
+
+	return id;
 }
 
 int nvme_get_features(struct nvme_ctrl *dev, unsigned fid, unsigned nsid,
@@ -997,32 +1002,21 @@ static void nvme_config_discard(struct nvme_ns *ns)
 	queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, ns->queue);
 }
 
-static int nvme_revalidate_ns(struct nvme_ns *ns, struct nvme_id_ns **id)
+static void nvme_report_ns_ids(struct nvme_ctrl *ctrl, unsigned int nsid,
+	       struct nvme_id_ns *id, u8 *eui64, u8 *nguid, u8 *uuid)
 {
-	if (nvme_identify_ns(ns->ctrl, ns->ns_id, id)) {
-		dev_warn(disk_to_dev(ns->disk), "%s: Identify failure\n",
-				__func__);
-		return -ENODEV;
-	}
-	if ((*id)->ncap == 0) {
-		kfree(*id);
-		return -ENODEV;
-	}
-
-	if (ns->ctrl->vs >= NVME_VS(1, 1, 0))
-		memcpy(ns->eui, (*id)->eui64, sizeof(ns->eui));
-	if (ns->ctrl->vs >= NVME_VS(1, 2, 0))
-		memcpy(ns->nguid, (*id)->nguid, sizeof(ns->nguid));
-	if (ns->ctrl->vs >= NVME_VS(1, 3, 0)) {
+	if (ctrl->vs >= NVME_VS(1, 1, 0))
+		memcpy(eui64, id->eui64, sizeof(id->eui64));
+	if (ctrl->vs >= NVME_VS(1, 2, 0))
+		memcpy(nguid, id->nguid, sizeof(id->nguid));
+	if (ctrl->vs >= NVME_VS(1, 3, 0)) {
 		 /* Don't treat error as fatal we potentially
 		  * already have a NGUID or EUI-64
 		  */
-		if (nvme_identify_ns_descs(ns, ns->ns_id))
-			dev_warn(ns->ctrl->device,
+		if (nvme_identify_ns_descs(ctrl, nsid, eui64, nguid, uuid))
+			dev_warn(ctrl->device,
 				 "%s: Identify Descriptors failed\n", __func__);
 	}
-
-	return 0;
 }
 
 static void __nvme_revalidate_disk(struct gendisk *disk, struct nvme_id_ns *id)
@@ -1074,22 +1068,28 @@ static void __nvme_revalidate_disk(struct gendisk *disk, struct nvme_id_ns *id)
 static int nvme_revalidate_disk(struct gendisk *disk)
 {
 	struct nvme_ns *ns = disk->private_data;
-	struct nvme_id_ns *id = NULL;
-	int ret;
+	struct nvme_ctrl *ctrl = ns->ctrl;
+	struct nvme_id_ns *id;
+	int ret = 0;
 
 	if (test_bit(NVME_NS_DEAD, &ns->flags)) {
 		set_capacity(disk, 0);
 		return -ENODEV;
 	}
 
-	ret = nvme_revalidate_ns(ns, &id);
-	if (ret)
-		return ret;
+	id = nvme_identify_ns(ctrl, ns->ns_id);
+	if (!id)
+		return -ENODEV;
 
-	__nvme_revalidate_disk(disk, id);
+	if (id->ncap == 0) {
+		ret = -ENODEV;
+		goto out;
+	}
+
+	nvme_report_ns_ids(ctrl, ns->ns_id, id, ns->eui, ns->nguid, ns->uuid);
+out:
 	kfree(id);
-
-	return 0;
+	return ret;
 }
 
 static char nvme_pr_type(enum pr_type type)
@@ -1836,8 +1836,14 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 
 	sprintf(disk_name, "nvme%dn%d", ctrl->instance, ns->instance);
 
-	if (nvme_revalidate_ns(ns, &id))
+	id = nvme_identify_ns(ctrl, nsid);
+	if (!id)
 		goto out_free_queue;
+
+	if (id->ncap == 0)
+		goto out_free_id;
+
+	nvme_report_ns_ids(ctrl, ns->ns_id, id, ns->eui, ns->nguid, ns->uuid);
 
 	if (nvme_nvm_ns_supported(ns, id)) {
 		if (nvme_nvm_register(ns->queue, disk_name)) {
