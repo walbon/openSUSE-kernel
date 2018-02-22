@@ -261,9 +261,9 @@
 struct name_list_extended {
 	struct get_name_list_extended *l;
 	dma_addr_t		ldma;
-	struct list_head 	fcports;	/* protect by sess_list */
+	struct list_head	fcports;
+	spinlock_t		fcports_lock;
 	u32			size;
-	u8			sent;
 };
 /*
  * Timeout timer counts in seconds
@@ -442,6 +442,7 @@ struct srb_iocb {
 		struct {
 			uint32_t cmd_hndl;
 			__le16 comp_status;
+			__le16 req_que_no;
 			struct completion comp;
 		} abt;
 		struct ct_arg ctarg;
