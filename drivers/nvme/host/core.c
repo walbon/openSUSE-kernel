@@ -1086,6 +1086,7 @@ static int nvme_revalidate_disk(struct gendisk *disk)
 		goto out;
 	}
 
+	__nvme_revalidate_disk(disk, id);
 	nvme_report_ns_ids(ctrl, ns->ns_id, id, ns->eui, ns->nguid, ns->uuid);
 out:
 	kfree(id);
