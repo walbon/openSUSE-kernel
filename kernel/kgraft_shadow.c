@@ -113,7 +113,7 @@ void *kgr_shadow_get(void *obj, unsigned long id)
 }
 EXPORT_SYMBOL_GPL(kgr_shadow_get);
 
-void *__kgr_shadow_get_or_alloc(void *obj, unsigned long id, void *data,
+static void *__kgr_shadow_get_or_alloc(void *obj, unsigned long id, void *data,
 		       size_t size, gfp_t gfp_flags, bool warn_on_exist)
 {
 	struct kgr_shadow *new_shadow;
