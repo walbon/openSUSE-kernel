@@ -32,7 +32,7 @@ obj-y += irq/
 obj-y += rcu/
 obj-y += livepatch/
 
-obj-$(CONFIG_KGRAFT) += kgraft.o kgraft_files.o
+obj-$(CONFIG_KGRAFT) += kgraft.o kgraft_files.o kgraft_shadow.o
 obj-$(CONFIG_CHECKPOINT_RESTORE) += kcmp.o
 obj-$(CONFIG_FREEZER) += freezer.o
 obj-$(CONFIG_PROFILING) += profile.o

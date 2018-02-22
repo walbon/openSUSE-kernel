@@ -139,6 +139,15 @@ extern void kgr_patch_dir_del(struct kgr_patch *patch);
 extern int kgr_add_files(void);
 extern void kgr_remove_files(void);
 
+
+extern void *kgr_shadow_get(void *obj, unsigned long id);
+extern void *kgr_shadow_alloc(void *obj, unsigned long id, void *data,
+			      size_t size, gfp_t gfp_flags);
+extern void *kgr_shadow_get_or_alloc(void *obj, unsigned long id, void *data,
+				     size_t size, gfp_t gfp_flags);
+extern void kgr_shadow_free(void *obj, unsigned long id);
+extern void kgr_shadow_free_all(unsigned long id);
+
 #endif /* IS_ENABLED(CONFIG_KGRAFT) */
 
 #endif /* LINUX_KGRAFT_H */
