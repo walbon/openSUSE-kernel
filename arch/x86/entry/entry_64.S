@@ -188,7 +188,8 @@ entry_SYSCALL_64_fastpath:
 	cmpl	$__NR_syscall_max, %eax
 #endif
 	ja	1f				/* return -ENOSYS (already in pt_regs->ax) */
-	MASK_NOSPEC %r11 %rax			/* sanitize syscall_nr wrt speculation */
+	sbb %r11, %r11				/* array_index_mask_nospec() */
+	and %r11, %rax
 	movq	%r10, %rcx
 #ifdef CONFIG_RETPOLINE
 	movq	sys_call_table(, %rax, 8), %rax

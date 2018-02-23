@@ -149,7 +149,7 @@ extern int __get_user_bad(void);
 #define __uaccess_begin_nospec()	\
 ({					\
 	stac();				\
-	ifence();			\
+	barrier_nospec();		\
 })
 
 /*
