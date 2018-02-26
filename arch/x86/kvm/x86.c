@@ -2770,6 +2770,12 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
 	kvm_x86_ops->vcpu_put(vcpu);
 	kvm_put_guest_fpu(vcpu);
 	vcpu->arch.last_host_tsc = rdtsc();
+	/*
+	 * If userspace has set any breakpoints or watchpoints, dr6 is restored
+	 * on every vmexit, but if not, we might have a stale dr6 from the
+	 * guest. do_debug expects dr6 to be cleared after it runs, do the same.
+	 */
+	set_debugreg(0, 6);
 }
 
 static int kvm_vcpu_ioctl_get_lapic(struct kvm_vcpu *vcpu,
@@ -8361,7 +8367,6 @@ void kvm_arch_async_page_present(struct kvm_vcpu *vcpu,
 		    vcpu->arch.exception.pending &&
 		    vcpu->arch.exception.nr == PF_VECTOR &&
 		    !apf_put_user(vcpu, 0)) {
-			vcpu->arch.exception.reinject = false;
 			vcpu->arch.exception.pending = false;
 			vcpu->arch.exception.nr = 0;
 			vcpu->arch.exception.has_error_code = false;
