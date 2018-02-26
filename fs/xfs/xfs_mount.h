@@ -156,11 +156,9 @@ typedef struct xfs_mount {
 	int64_t			m_low_space[XFS_LOWSP_MAX];
 						/* low free space thresholds */
 	struct xfs_kobj		m_kobj;
-#ifndef __GENKSYMS__
 	struct xfs_kobj		m_error_kobj;
 	struct xfs_kobj		m_error_meta_kobj;
 	struct xfs_error_cfg	m_error_cfg[XFS_ERR_CLASS_MAX][XFS_ERR_ERRNO_MAX];
-#endif
 	struct xstats		m_stats;	/* per-fs stats */
 
 	struct workqueue_struct *m_buf_workqueue;
@@ -182,9 +180,7 @@ typedef struct xfs_mount {
 	 */
 	__uint32_t		m_generation;
 
-#ifndef __GENKSYMS__
 	bool			m_fail_unmount;
-#endif
 	const char		*m_mtpt;
 } xfs_mount_t;
 

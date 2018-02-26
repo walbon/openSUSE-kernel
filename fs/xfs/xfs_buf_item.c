@@ -1051,7 +1051,6 @@ xfs_buf_do_callbacks(
 	}
 }
 
-#ifndef __GENKSYMS__
 /*
  * Invoke the error state callback for each log item affected by the failed I/O.
  *
@@ -1076,7 +1075,6 @@ xfs_buf_do_callbacks_fail(
 	}
 	spin_unlock(&ailp->xa_lock);
 }
-#endif
 
 static bool
 xfs_buf_iodone_callback_error(
@@ -1086,10 +1084,7 @@ xfs_buf_iodone_callback_error(
 	struct xfs_mount	*mp = lip->li_mountp;
 	static ulong		lasttime;
 	static xfs_buftarg_t	*lasttarg;
-#ifndef __GENKSYMS__
 	struct xfs_error_cfg	*cfg;
-#endif
-	bool			last_error_match = false;
 
 	/*
 	 * If we've already decided to shutdown the filesystem because of
@@ -1112,10 +1107,6 @@ xfs_buf_iodone_callback_error(
 	trace_xfs_buf_item_iodone_async(bp, _RET_IP_);
 	ASSERT(bp->b_iodone != NULL);
 
-#ifndef __GENKSYMS__
-	if (bp->b_last_error != bp->b_error)
-		last_error_match = true;
-#endif
 	/*
 	 * If the write was asynchronous then no one will be looking for the
 	 * error.  If this is the first failure of this type, clear the error
@@ -1124,21 +1115,18 @@ xfs_buf_iodone_callback_error(
 	 * up to behave correctly now for repeated failures.
 	 */
 	if (!(bp->b_flags & (XBF_STALE|XBF_WRITE_FAIL)) ||
-	     last_error_match) {
+	     bp->b_last_error != bp->b_error) {
 		bp->b_flags |= (XBF_WRITE | XBF_ASYNC |
 			        XBF_DONE | XBF_WRITE_FAIL);
-#ifndef __GENKSYMS__
 		bp->b_last_error = bp->b_error;
 		bp->b_retries = 0;
 		bp->b_first_retry_time = jiffies;
-#endif
 
 		xfs_buf_ioerror(bp, 0);
 		xfs_buf_submit(bp);
 		return true;
 	}
 
-#ifndef __GENKSYMS__
 	/*
 	 * Repeated failure on an async write. Take action according to the
 	 * error configuration we have been set up to use.
@@ -1161,19 +1149,16 @@ xfs_buf_iodone_callback_error(
 	 * the higher layers retry the buffer.
 	 */
 	xfs_buf_do_callbacks_fail(bp);
-#endif
 	xfs_buf_ioerror(bp, 0);
 	xfs_buf_relse(bp);
 	return true;
 
-#ifndef __GENKSYMS__
 	/*
 	 * Permanent error - we need to trigger a shutdown if we haven't already
 	 * to indicate that inconsistency will result from this action.
 	 */
 permanent_error:
 	xfs_force_shutdown(mp, SHUTDOWN_META_IO_ERROR);
-#endif
 out_stale:
 	xfs_buf_stale(bp);
 	XFS_BUF_DONE(bp);
@@ -1200,14 +1185,12 @@ xfs_buf_iodone_callbacks(
 	if (bp->b_error && xfs_buf_iodone_callback_error(bp))
 		return;
 
-#ifndef __GENKSYMS__
 	/*
 	 * Successful IO or permanent error. Either way, we can clear the
 	 * retry state here in preparation for the next error that may occur.
 	 */
 	bp->b_last_error = 0;
 	bp->b_retries = 0;
-#endif
 
 	xfs_buf_do_callbacks(bp);
 	bp->b_fspriv = NULL;
@@ -1247,7 +1230,6 @@ xfs_buf_iodone(
 	xfs_buf_item_free(BUF_ITEM(lip));
 }
 
-#ifndef __GENKSYMS__
 /*
  * Requeue a failed buffer for writeback
  *
@@ -1275,4 +1257,3 @@ xfs_buf_resubmit_failed_buffers(
 	/* Add this buffer back to the delayed write list */
 	return xfs_buf_delwri_queue(bp, buffer_list);
 }
-#endif

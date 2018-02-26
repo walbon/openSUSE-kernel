@@ -42,9 +42,7 @@ typedef struct xfs_log_item {
 	struct xfs_ail			*li_ailp;	/* ptr to AIL */
 	uint				li_type;	/* item type */
 	uint				li_flags;	/* misc flags */
-#ifndef __GENKSYMS__
 	struct xfs_buf			*li_buf;	/* real buffer pointer */
-#endif
 	struct xfs_log_item		*li_bio_list;	/* buffer item list */
 	void				(*li_cb)(struct xfs_buf *,
 						 struct xfs_log_item *);
@@ -76,9 +74,7 @@ struct xfs_item_ops {
 	void (*iop_unlock)(xfs_log_item_t *);
 	xfs_lsn_t (*iop_committed)(xfs_log_item_t *, xfs_lsn_t);
 	void (*iop_committing)(xfs_log_item_t *, xfs_lsn_t);
-#ifndef __GENKSYMS__
 	void (*iop_error)(xfs_log_item_t *, xfs_buf_t *);
-#endif
 };
 
 void	xfs_log_item_init(struct xfs_mount *mp, struct xfs_log_item *item,
