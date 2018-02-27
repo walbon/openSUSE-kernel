@@ -661,7 +661,7 @@ static int nvme_identify_ns_descs(struct nvme_ctrl *ctrl, unsigned nsid,
 				goto free_data;
 			}
 			len = NVME_NIDT_UUID_LEN;
-			memcpy(&uuid, data + pos + sizeof(*cur), len);
+			memcpy(uuid, data + pos + sizeof(*cur), len);
 			break;
 		default:
 			/* Skip unnkown types */
