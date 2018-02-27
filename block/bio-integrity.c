@@ -379,7 +379,6 @@ static void bio_integrity_verify_fn(struct work_struct *work)
 /**
  * bio_integrity_endio - Integrity I/O completion function
  * @bio:	Protected bio
- * @error:	Pointer to errno
  *
  * Description: Completion for integrity I/O
  *
