@@ -187,7 +187,6 @@ typedef struct xfs_buf {
 	unsigned int		b_offset;	/* page offset in first page */
 	int			b_error;	/* error code on I/O */
 
-#ifndef __GENKSYMS__
 	/*
 	 * async write failure retry count. Initialised to zero on the first
 	 * failure, then when it exceeds the maximum configured without a
@@ -206,7 +205,6 @@ typedef struct xfs_buf {
 	int			b_retries;
 	unsigned long		b_first_retry_time; /* in jiffies */
 	int			b_last_error;
-#endif
 
 	const struct xfs_buf_ops	*b_ops;
 

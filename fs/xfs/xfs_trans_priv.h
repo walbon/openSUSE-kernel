@@ -165,7 +165,6 @@ xfs_trans_ail_copy_lsn(
 }
 #endif
 
-#ifndef __GENKSYMS__
 static inline void
 xfs_clear_li_failed(
 	struct xfs_log_item	*lip)
@@ -181,16 +180,7 @@ xfs_clear_li_failed(
 		xfs_buf_rele(bp);
 	}
 }
-#else
-static inline void
-xfs_clear_li_failed(
-	struct xfs_log_item	*lip)
-{
-	return;
-}
-#endif
 
-#ifndef __GENKSYMS__
 static inline void
 xfs_set_li_failed(
 	struct xfs_log_item	*lip,
@@ -204,14 +194,5 @@ xfs_set_li_failed(
 		lip->li_buf = bp;
 	}
 }
-#else
-static inline void
-xfs_set_li_failed(
-	struct xfs_log_item	*lip,
-	struct xfs_buf		*bp)
-{
-	return;
-}
-#endif
 
 #endif	/* __XFS_TRANS_PRIV_H__ */

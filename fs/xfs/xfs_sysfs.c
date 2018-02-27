@@ -273,7 +273,6 @@ struct kobj_type xfs_log_ktype = {
 	.default_attrs = xfs_log_attrs,
 };
 
-#ifndef __GENKSYMS__
 /*
  * Metadata IO error configuration
  *
@@ -561,7 +560,3 @@ xfs_error_get_cfg(
 
 	return cfg;
 }
-#else
-int xfs_error_sysfs_init(struct xfs_mount *mp) { return; }
-void xfs_error_sysfs_del(struct xfs_mount *mp) { return; }
-#endif /* __GENKSYMS__ */

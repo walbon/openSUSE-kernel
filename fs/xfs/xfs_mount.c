@@ -683,10 +683,8 @@ xfs_mountfs(
 
 	xfs_set_maxicount(mp);
 
-#ifndef __GENKSYMS__
 	/* enable fail_at_unmount as default */
 	mp->m_fail_unmount = 1;
-#endif
 
 	error = xfs_sysfs_init(&mp->m_kobj, &xfs_mp_ktype, NULL, mp->m_fsname);
 	if (error)
