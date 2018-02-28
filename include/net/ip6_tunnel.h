@@ -5,6 +5,8 @@
 #include <linux/netdevice.h>
 #include <linux/if_tunnel.h>
 #include <linux/ip6_tunnel.h>
+#include <net/ip_tunnels.h>
+#include <net/dst_cache.h>
 
 #define IP6TUNNEL_ERR_TIMEO (30*HZ)
 
@@ -45,7 +47,11 @@ struct ip6_tnl {
 	struct net *net;	/* netns for packet i/o */
 	struct __ip6_tnl_parm parms;	/* tunnel configuration parameters */
 	struct flowi fl;	/* flowi template for xmit */
+#ifdef __GENKSYMS__
 	struct ip6_tnl_dst __percpu *dst_cache;	/* cached dst */
+#else
+	void *__unused;			/* kABI padding to preserve layout */
+#endif
 
 	int err_count;
 	unsigned long err_time;
@@ -55,6 +61,9 @@ struct ip6_tnl {
 	__u32 o_seqno;	/* The last output seqno */
 	int hlen;       /* Precalculated GRE header length */
 	int mlink;
+#ifndef __GENKSYMS__
+	struct dst_cache dst_cache;	/* cached dst */
+#endif
 };
 
 /* Tunnel encapsulation limit destination sub-option */
