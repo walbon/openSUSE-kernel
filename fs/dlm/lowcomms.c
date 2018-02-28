@@ -794,6 +794,8 @@ static int tcp_accept_from_sock(struct connection *con)
 			othercon->nodeid = nodeid;
 			othercon->rx_action = receive_from_sock;
 			mutex_init(&othercon->sock_mutex);
+			INIT_LIST_HEAD(&othercon->writequeue);
+			spin_lock_init(&othercon->writequeue_lock);
 			INIT_WORK(&othercon->swork, process_send_sockets);
 			INIT_WORK(&othercon->rwork, process_recv_sockets);
 			set_bit(CF_IS_OTHERCON, &othercon->flags);
@@ -910,6 +912,8 @@ static int sctp_accept_from_sock(struct connection *con)
 			othercon->nodeid = nodeid;
 			othercon->rx_action = receive_from_sock;
 			mutex_init(&othercon->sock_mutex);
+			INIT_LIST_HEAD(&othercon->writequeue);
+			spin_lock_init(&othercon->writequeue_lock);
 			INIT_WORK(&othercon->swork, process_send_sockets);
 			INIT_WORK(&othercon->rwork, process_recv_sockets);
 			set_bit(CF_IS_OTHERCON, &othercon->flags);
@@ -1632,11 +1636,20 @@ static int work_start(void)
 	return 0;
 }
 
-static void stop_conn(struct connection *con)
+static void _stop_conn(struct connection *con, bool and_other)
 {
-	con->flags |= 0x0F;
+	mutex_lock(&con->sock_mutex);
+	set_bit(CF_READ_PENDING, &con->flags);
 	if (con->sock && con->sock->sk)
 		con->sock->sk->sk_user_data = NULL;
+	if (con->othercon && and_other)
+		_stop_conn(con->othercon, false);
+	mutex_unlock(&con->sock_mutex);
+}
+
+static void stop_conn(struct connection *con)
+{
+	_stop_conn(con, true);
 }
 
 static void free_conn(struct connection *con)
@@ -1648,6 +1661,32 @@ static void free_conn(struct connection *con)
 	kmem_cache_free(con_cache, con);
 }
 
+static void work_flush(void)
+{
+	int ok;
+	int i;
+	struct hlist_node *n;
+	struct connection *con;
+
+	flush_workqueue(recv_workqueue);
+	flush_workqueue(send_workqueue);
+	do {
+		ok = 1;
+		foreach_conn(stop_conn);
+		flush_workqueue(recv_workqueue);
+		flush_workqueue(send_workqueue);
+		for (i = 0; i < CONN_HASH_SIZE && ok; i++) {
+			hlist_for_each_entry_safe(con, n,
+						  &connection_hash[i], list) {
+				ok &= test_bit(CF_READ_PENDING, &con->flags);
+				if (con->othercon)
+					ok &= test_bit(CF_READ_PENDING,
+						       &con->othercon->flags);
+			}
+		}
+	} while (!ok);
+}
+
 void dlm_lowcomms_stop(void)
 {
 	/* Set all the flags to prevent any
@@ -1655,11 +1694,10 @@ void dlm_lowcomms_stop(void)
 	*/
 	mutex_lock(&connections_lock);
 	dlm_allow_conn = 0;
-	foreach_conn(stop_conn);
+	mutex_unlock(&connections_lock);
+	work_flush();
 	clean_writequeues();
 	foreach_conn(free_conn);
-	mutex_unlock(&connections_lock);
-
 	work_stop();
 
 	kmem_cache_destroy(con_cache);
