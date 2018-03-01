@@ -175,7 +175,7 @@ static inline u16 mlx5e_calc_min_inline(enum mlx5_inline_modes mode,
 	default:
 		hlen = mlx5e_skb_l2_header_offset(skb);
 	}
-	return min_t(u16, hlen, skb->len);
+	return min_t(u16, hlen, skb_headlen(skb));
 }
 
 static inline u16 mlx5e_get_inline_hdr_size(struct mlx5e_sq *sq,
