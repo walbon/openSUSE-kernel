@@ -13,6 +13,7 @@
 #include <net/netns/generic.h>
 #include <net/rtnetlink.h>
 #include <net/lwtunnel.h>
+#include <net/dst_cache.h>
 
 #if IS_ENABLED(CONFIG_IPV6)
 #include <net/ipv6.h>
@@ -86,8 +87,8 @@ struct ip_tunnel_prl_entry {
 };
 
 struct ip_tunnel_dst {
-	struct dst_entry __rcu 		*dst;
-	__be32				 saddr;
+	struct dst_entry __rcu		*dst;
+	__be32				saddr;
 };
 
 struct metadata_dst;
@@ -108,7 +109,11 @@ struct ip_tunnel {
 	int		tun_hlen;	/* Precalculated header length */
 	int		mlink;
 
+#ifdef __GENKSYMS__
 	struct ip_tunnel_dst __percpu *dst_cache;
+#else
+	void *__unused;			/* kABI padding to preserve layout */
+#endif
 
 	struct ip_tunnel_parm parms;
 
@@ -126,6 +131,9 @@ struct ip_tunnel {
 	int			ip_tnl_net_id;
 	struct gro_cells	gro_cells;
 	bool			collect_md;
+#ifndef __GENKSYMS__
+	struct dst_cache dst_cache;
+#endif
 };
 
 #define TUNNEL_CSUM		__cpu_to_be16(0x01)
