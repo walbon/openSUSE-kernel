@@ -1079,6 +1079,7 @@ void qla24xx_handle_gpdb_event(scsi_qla_host_t *vha, struct event_arg *ea)
 	fc_port_t *fcport = ea->fcport;
 	struct port_database_24xx *pd;
 	struct srb *sp = ea->sp;
+	uint8_t	ls;
 
 	pd = (struct port_database_24xx *)sp->u.iocb_cmd.u.mbx.in;
 
@@ -1091,7 +1092,12 @@ void qla24xx_handle_gpdb_event(scsi_qla_host_t *vha, struct event_arg *ea)
 	if (fcport->disc_state == DSC_DELETE_PEND)
 		return;
 
-	switch (pd->current_login_state) {
+	if (fcport->fc4f_nvme)
+		ls = pd->current_login_state >> 4;
+	else
+		ls = pd->current_login_state & 0xf;
+
+	switch (ls) {
 	case PDS_PRLI_COMPLETE:
 		__qla24xx_parse_gpdb(vha, fcport, pd);
 		break;
