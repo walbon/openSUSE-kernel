@@ -3104,6 +3104,7 @@ static int smack_sem_semctl(struct sem_array *sma, int cmd)
 	case GETALL:
 	case IPC_STAT:
 	case SEM_STAT:
+	case SEM_STAT_ANY:
 		may = MAY_READ;
 		break;
 	case SETVAL:
