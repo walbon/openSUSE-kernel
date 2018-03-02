@@ -86,10 +86,6 @@
 .Lend_\@:
 .endm
 
-.macro STUFF_RSB
-	ALTERNATIVE "call stuff_rsb", "", X86_FEATURE_SMEP
-.endm
-
 #else /* __ASSEMBLY__ */
 extern int ibrs_state;
 void x86_enable_ibrs(void);
